@@ -109,6 +109,24 @@ const config = Object.freeze({
 
   bcryptRounds: int('BCRYPT_ROUNDS', isTest ? 4 : 10),
 
+  /**
+   * Brevo's HTTPS transactional API, used in preference to SMTP when an API key
+   * is present.
+   *
+   * This exists because Railway blocks outbound SMTP on Free/Trial/Hobby plans
+   * (ports 25/465/587/2525 all time out at the network layer), so the SMTP path
+   * cannot deliver from a Railway deployment at all. The HTTPS API runs over 443
+   * and is unaffected. SMTP is kept as a fallback for local development and for
+   * hosts that do allow it.
+   */
+  brevo: Object.freeze({
+    apiKey: process.env.BREVO_API_KEY || '',
+    baseUrl: process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email',
+    get enabled() {
+      return Boolean(process.env.BREVO_API_KEY);
+    },
+  }),
+
   smtp: Object.freeze({
     host: process.env.SMTP_HOST || '',
     port: int('SMTP_PORT', 2525),

@@ -23,10 +23,115 @@ let transport = null;
 /** Messages captured by the console transport. Used by tests to assert on mail. */
 const outbox = [];
 
+/**
+ * True when mail leaves the process for real, by either delivery path.
+ *
+ * The console transport is the only mode that fills `outbox`, so this is what
+ * distinguishes "logged" from "sent" — previously that decision read
+ * `config.smtp.enabled` directly, which would have mis-classified Brevo sends as
+ * console sends and pushed real mail into the test outbox.
+ */
+const deliversForReal = () => config.brevo.enabled || config.smtp.enabled;
+
+/** `"TixLock <no-reply@x.com>"` -> `{ name: 'TixLock', email: 'no-reply@x.com' }`. */
+function parseAddress(value) {
+  const raw = String(value ?? '').trim();
+  const angled = raw.match(/^\s*(.*?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (angled) {
+    return { name: angled[1].replace(/^"|"$/g, '').trim() || undefined, email: angled[2].trim() };
+  }
+  return { email: raw };
+}
+
+/** Brevo takes a list of recipients; our call sites pass one address as a string. */
+const parseRecipients = (value) =>
+  (Array.isArray(value) ? value : String(value ?? '').split(','))
+    .map((entry) => parseAddress(entry))
+    .filter((addr) => addr.email);
+
+/**
+ * Nodemailer custom transport backed by Brevo's HTTPS API.
+ *
+ * Implemented as a transport plugin rather than as a branch inside `send()` so
+ * that every existing call site, template and attachment stays byte-identical —
+ * the swap is invisible above `getTransport()`.
+ *
+ * Note on the QR code: Brevo does not support CID/embedded images on
+ * transactional email through either the API or its SMTP relay, so the
+ * `<img src="cid:booking-qr">` in the confirmation template cannot render on this
+ * path. The QR is delivered as a normal `.png` attachment instead, which is what
+ * the plain-text part of that template already tells the recipient to look for.
+ */
+function createBrevoTransport() {
+  return nodemailer.createTransport({
+    name: 'brevo-http',
+    version: '1.0.0',
+
+    send(mail, callback) {
+      const data = mail.data || {};
+      const sender = parseAddress(data.from);
+      const to = parseRecipients(data.to);
+
+      const attachment = (data.attachments || [])
+        .map((att) => {
+          const content = Buffer.isBuffer(att.content)
+            ? att.content
+            : att.content != null
+              ? Buffer.from(String(att.content))
+              : null;
+          if (!content) return null;
+          return { name: att.filename || 'attachment', content: content.toString('base64') };
+        })
+        .filter(Boolean);
+
+      const payload = {
+        sender,
+        to,
+        subject: data.subject,
+        ...(data.html ? { htmlContent: data.html } : {}),
+        ...(data.text ? { textContent: data.text } : {}),
+        ...(attachment.length ? { attachment } : {}),
+      };
+
+      fetch(config.brevo.baseUrl, {
+        method: 'POST',
+        headers: {
+          'api-key': config.brevo.apiKey,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+        // Bounded for the same reason the SMTP timeouts are: a hanging provider
+        // must never pin a worker.
+        signal: AbortSignal.timeout(15_000),
+      })
+        .then(async (res) => {
+          const body = await res.text();
+          if (!res.ok) {
+            // Surface Brevo's own message — it names the bad field, which a bare
+            // status code does not.
+            throw new Error(`Brevo API ${res.status}: ${body.slice(0, 300)}`);
+          }
+          let messageId;
+          try {
+            messageId = JSON.parse(body).messageId;
+          } catch {
+            /* 2xx with an unparseable body still counts as accepted. */
+          }
+          callback(null, { messageId, envelope: { from: sender.email, to: to.map((t) => t.email) } });
+        })
+        .catch((err) => callback(err));
+    },
+  });
+}
+
 function getTransport() {
   if (transport) return transport;
 
-  if (config.smtp.enabled) {
+  if (config.brevo.enabled) {
+    transport = createBrevoTransport();
+    console.log('[mail] Brevo HTTPS API transport ready');
+  } else if (config.smtp.enabled) {
     transport = nodemailer.createTransport({
       host: config.smtp.host,
       port: config.smtp.port,
@@ -44,7 +149,9 @@ function getTransport() {
     // real nodemailer code path (templating, addressing, attachments) exercised.
     transport = nodemailer.createTransport({ jsonTransport: true });
     if (!config.isTest) {
-      console.log('[mail] SMTP_HOST not set — using console transport, mail will be logged not sent');
+      console.log(
+        '[mail] neither BREVO_API_KEY nor SMTP_HOST set — using console transport, mail will be logged not sent'
+      );
     }
   }
 
@@ -57,7 +164,7 @@ async function send({ to, subject, text, html, attachments }) {
   try {
     const info = await getTransport().sendMail(message);
 
-    if (!config.smtp.enabled) {
+    if (!deliversForReal()) {
       outbox.push({ to, subject, text, html, sentAt: new Date().toISOString() });
       if (!config.isTest) {
         console.log(`[mail] (not sent) to=${to} subject="${subject}"`);
