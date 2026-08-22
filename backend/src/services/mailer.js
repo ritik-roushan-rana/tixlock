@@ -169,6 +169,11 @@ async function send({ to, subject, text, html, attachments }) {
       if (!config.isTest) {
         console.log(`[mail] (not sent) to=${to} subject="${subject}"`);
       }
+    } else if (!config.isTest) {
+      // A successful real send used to log nothing at all, which makes "delivered"
+      // and "silently never attempted" indistinguishable in production logs. The
+      // provider's message id is the handle needed to look a delivery up later.
+      console.log(`[mail] sent to=${to} id=${info.messageId || 'n/a'} subject="${subject}"`);
     }
 
     return { sent: true, messageId: info.messageId };
