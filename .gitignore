@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Secrets — never commit a real env file. Only .env.example belongs in the repo.
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+dist-ssr/
+build/
+.vite/
+
+# Generated screenshots from the E2E design audit (scripts/e2e/*.mjs)
+_shots/
+
+# Database dumps and local database files
+*.sql.gz
+*.dump
+*.dumpfile
+*.bak
+pgdata/
+*.sqlite
+*.sqlite3
+*.db
+
+# Test and coverage output
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

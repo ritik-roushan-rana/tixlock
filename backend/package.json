@@ -1,0 +1,41 @@
+{
+  "name": "tixlock-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TixLock — seat booking for films and live music. Express + PostgreSQL",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/migrations/run.js up",
+    "migrate:status": "node src/migrations/run.js status",
+    "migrate:reset": "node src/migrations/run.js reset",
+    "seed": "node src/scripts/seed.js",
+    "test": "NODE_ENV=test jest --runInBand"
+  },
+  "dependencies": {
+    "bcrypt": "5.1.1",
+    "cors": "2.8.5",
+    "dotenv": "16.4.5",
+    "express": "4.21.2",
+    "jsonwebtoken": "9.0.2",
+    "node-cron": "3.0.3",
+    "nodemailer": "6.9.16",
+    "pg": "8.13.1",
+    "qrcode": "1.5.4",
+    "socket.io": "4.8.1"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "socket.io-client": "^4.8.1",
+    "supertest": "7.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "globalSetup": "<rootDir>/tests/globalSetup.js",
+    "testTimeout": 30000
+  }
+}

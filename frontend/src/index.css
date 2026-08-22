@@ -1,0 +1,322 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * TixLock design tokens — "Quiet Brutalism".
+ *
+ * Derived from the Stitch export in /stitch_tixlock_seat_reservation_platform.
+ * Three rules drive everything below:
+ *
+ *  1. STRUCTURE IS TONAL, NOT SHADOWED. Depth comes from stepping between cream
+ *     surfaces (--background -> --surface-low -> --card -> --card-alt), never from
+ *     a blur. There are no elevation shadows in this system.
+ *  2. COLOUR IS SIGNAL ONLY. Lime, cobalt and error are reserved for status, the
+ *     primary path, and urgency. They are never decorative, never a gradient, and
+ *     never a page background.
+ *  3. SHARP. Radius is 0 everywhere. Hierarchy is carried by type scale and weight.
+ *
+ * Cream is the DEFAULT theme; :root is light. The .dark block is a derived
+ * counterpart that keeps the existing theme toggle working — same signal hues,
+ * inverted structure, with cobalt and error lifted for legibility on dark surfaces.
+ *
+ * Every value here was chosen against a WCAG 2.1 contrast check rather than by eye.
+ * The Stitch palette shipped seven failures; the notes below mark what changed and
+ * why, so nobody "restores" a broken value later.
+ */
+@layer base {
+  :root {
+    /* --- Structure: cream tonal ladder ------------------------------------ */
+    --background: 60 33.3% 97.1%; /* #fafaf5 cream */
+    --surface-low: 60 18.5% 94.7%; /* #f4f4ef */
+    --card: 60 12.8% 92.4%; /* #eeeee9 — section + card fill */
+    --card-alt: 60 8.2% 88%; /* #e3e3de — nested block */
+
+    --foreground: 100 5.7% 10.4%; /* #1a1c19 near-black ink */
+    --card-foreground: 100 5.7% 10.4%;
+    --popover: 60 33.3% 97.1%;
+    --popover-foreground: 100 5.7% 10.4%;
+
+    /*
+     * Stitch used #747878 for muted text: 4.27:1 on cream, under the 4.5 minimum.
+     * Darkened to #696d6d, which clears on both cream (5.00:1) and card (4.50:1).
+     */
+    --muted: 60 12.8% 92.4%;
+    --muted-foreground: 180 1.9% 42%; /* #696d6d */
+
+    --secondary: 60 12.8% 92.4%;
+    --secondary-foreground: 100 5.7% 10.4%;
+    --accent: 60 8.2% 88%;
+    --accent-foreground: 100 5.7% 10.4%;
+
+    /*
+     * Stitch's #c4c7c7 hairline sat at 1.46:1 against the card and effectively
+     * vanished. Raised to #828a8a (3.03:1) so a boundary is a boundary.
+     * --border-strong is the 1px ink outline the brutalist spec calls for on
+     * inputs and discrete UI edges.
+     */
+    --border: 180 3.3% 52.5%; /* #828a8a */
+    --border-strong: 100 5.7% 10.4%; /* #1a1c19 */
+    --input: 100 5.7% 10.4%;
+
+    /* --- Signal ----------------------------------------------------------- */
+    /*
+     * Lime is a FILL ONLY. As text on cream it is 1.27:1 and as a bearer of white
+     * text it is 1.32:1 — both unusable. It always carries ink (#1a1c19, 12.95:1).
+     */
+    --lime: 72 100% 47.3%; /* #c1f100 */
+    --lime-dim: 72.1 100% 42%; /* #abd600 — pressed/hover */
+    --on-lime: 100 5.7% 10.4%;
+
+    --cobalt: 223.3 100% 37.3%; /* #0035be — selection, info, focus */
+    --cobalt-deep: 226.7 100% 16.9%; /* #001356 */
+    --on-cobalt: 0 0% 100%; /* 9.32:1 */
+
+    /*
+     * --primary is INK, not lime.
+     *
+     * Every shadcn Button defaults to bg-primary, so if primary were lime then a
+     * secondary auth button would shout as loudly as "Confirm booking" and the signal
+     * would be worth nothing. Lime is opt-in per screen via <Button variant="lime">,
+     * for the one action that genuinely is the most important. This mirrors the
+     * export's own config, where primary is #000000 and lime is a container colour.
+     */
+    --primary: 100 5.7% 10.4%;
+    --primary-foreground: 60 33.3% 97.1%;
+
+    --destructive: 0 75.5% 41.6%; /* #ba1a1a — 6.17:1 on cream */
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 72% 29%;
+    --success-foreground: 0 0% 100%;
+    --warning: 26 90% 37%;
+    --warning-foreground: 0 0% 100%;
+
+    --ring: 223.3 100% 37.3%; /* cobalt focus ring, 8.90:1 on cream */
+
+    /* Inverted panel: the brutalist "pop" without a shadow. */
+    --panel: 0 1.8% 10.8%; /* #1c1b1b */
+    --panel-foreground: 60 33.3% 97.1%; /* 16.41:1 */
+
+    /* Sharp. Not negotiable in this system. */
+    --radius: 0rem;
+
+    /* --- Seat states ------------------------------------------------------
+     * Six, not the four Stitch drew. The export collapsed "held by you" and
+     * "held by someone else" into one grey — but which of the two it is decides
+     * whether the seat is yours to pay for, so they cannot share a colour.
+     *
+     * Mapping follows the export's own logic: lime marks the most important thing
+     * on screen, so lime is YOUR hold. Cobalt is selection. Hatch is the waitlist
+     * reservation. Ink is sold.
+     *
+     * available and mine are light fills, so their 3:1 boundary is carried by a
+     * 1px ink border, not by the fill.
+     */
+    --seat-available: 0 0% 100%; /* white fill + ink border */
+    --seat-selected: 223.3 100% 37.3%; /* cobalt, 8.01:1 vs card */
+    --seat-mine: 72 100% 47.3%; /* lime + ink border */
+    --seat-taken: 157.5 3.3% 52.5%; /* #828a87 — was #e3e3de at 1.11:1 */
+    --seat-offered: 100 5.7% 10.4%; /* ink hatch on cream */
+    --seat-booked: 100 5.7% 10.4%; /* solid ink, 14.74:1 */
+  }
+
+  .dark {
+    --background: 90 6.7% 5.9%;
+    --surface-low: 90 5% 7.8%;
+    --card: 80 6.1% 9.6%;
+    --card-alt: 75 5.9% 13.3%;
+
+    --foreground: 60 15.2% 93.5%;
+    --card-foreground: 60 15.2% 93.5%;
+    --popover: 80 6.1% 9.6%;
+    --popover-foreground: 60 15.2% 93.5%;
+
+    --muted: 80 6.1% 9.6%;
+    --muted-foreground: 150 2% 61.2%; /* 7.04:1 on bg */
+
+    --secondary: 75 5.9% 13.3%;
+    --secondary-foreground: 60 15.2% 93.5%;
+    --accent: 75 5.9% 13.3%;
+    --accent-foreground: 60 15.2% 93.5%;
+
+    --border: 120 2% 29.6%;
+    --border-strong: 60 15.2% 93.5%;
+    --input: 120 2% 29.6%;
+
+    /* Lime survives inversion unchanged — it is already a dark-text-on-bright fill. */
+    --lime: 72 100% 47.3%;
+    --lime-dim: 72.1 100% 42%;
+    --on-lime: 100 5.7% 10.4%;
+
+    /* Cobalt at 37% lightness is unreadable on near-black; lifted to #4f7cff. */
+    --cobalt: 224.7 100% 65.5%; /* 5.14:1 on bg */
+    --cobalt-deep: 230.7 100% 86.1%;
+    --on-cobalt: 100 5.7% 10.4%;
+
+    /* Inverts with the surface: a cream block carrying ink text. */
+    --primary: 60 15.2% 93.5%;
+    --primary-foreground: 100 5.7% 10.4%;
+
+    --destructive: 0 100% 71%; /* #ff6b6b, 6.30:1 on card */
+    --destructive-foreground: 100 5.7% 10.4%;
+    --success: 150 65% 55%;
+    --success-foreground: 100 5.7% 10.4%;
+    --warning: 38 95% 60%;
+    --warning-foreground: 100 5.7% 10.4%;
+
+    --ring: 224.7 100% 65.5%;
+
+    /* The inverted panel inverts too: cream block on a dark page. */
+    --panel: 60 15.2% 93.5%;
+    --panel-foreground: 100 5.7% 10.4%;
+
+    --seat-available: 80 6.1% 9.6%; /* card fill + light border */
+    --seat-selected: 224.7 100% 65.5%;
+    --seat-mine: 72 100% 47.3%;
+    --seat-taken: 150 2.1% 36.9%;
+    --seat-offered: 60 15.2% 93.5%; /* hatch inverts to cream lines */
+    --seat-booked: 75 5.9% 13.3%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Tabular figures everywhere a number is compared or counts down. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * Anton ships a single weight (400) and is already very heavy. Asking the browser
+   * for 700 triggers synthetic emboldening, which smears a condensed face badly.
+   * Pinning display text to 400 is what keeps it crisp.
+   */
+  .font-display,
+  h1,
+  h2,
+  h3 {
+    font-weight: 400;
+  }
+}
+
+@layer utilities {
+  /**
+   * Display treatment. Anton, tight leading, slight negative tracking so a large
+   * title reads as one monolithic block — the "zine" effect the reference leans on.
+   */
+  .heading {
+    font-family: theme('fontFamily.display');
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    text-wrap: balance;
+  }
+  .heading-xl {
+    @apply heading;
+  }
+
+  /* Status tags and eyebrows. The one place the system uses uppercase. */
+  .eyebrow {
+    @apply text-[0.75rem] font-bold uppercase leading-none tracking-[0.08em];
+    font-family: theme('fontFamily.sans');
+  }
+
+  /**
+   * Scrim behind text that sits over photography.
+   *
+   * Retained from the previous system because it is load-bearing for legibility,
+   * not decoration — the hero title is white Anton over a photograph, and without
+   * this it fails contrast against any light region of the image. Rewritten to ramp
+   * to the page background rather than a tinted glow, so it reads as a hard
+   * editorial block rather than a soft fade.
+   */
+  .scrim-bottom {
+    background: linear-gradient(
+      to top,
+      hsl(var(--panel)) 0%,
+      hsl(var(--panel) / 0.85) 30%,
+      hsl(var(--panel) / 0.35) 60%,
+      transparent 100%
+    );
+  }
+
+  /**
+   * Diagonal hatch — the waitlist-offered seat, and the only "pattern" in the
+   * system. Kept because it survives greyscale and colour-blindness, which a fill
+   * alone does not.
+   */
+  .hatch {
+    background-image: repeating-linear-gradient(
+      45deg,
+      hsl(var(--seat-offered)) 0 1.5px,
+      transparent 1.5px 5px
+    );
+  }
+
+  /**
+   * Editorial frame. The export's "No Edge" rule: content never touches the
+   * viewport. 24px on mobile, 64px from lg up.
+   */
+  .frame {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  @media (min-width: 1024px) {
+    .frame {
+      padding-left: 4rem;
+      padding-right: 4rem;
+    }
+  }
+
+  /* Thin scrollbar for the horizontally scrolling seat map on mobile. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+  }
+}
+
+/**
+ * Sonner's own markup, squared off.
+ *
+ * The toast's close button is rendered by the library and styled from the stylesheet
+ * it injects at runtime — after Tailwind's, at equal specificity — so utility classes
+ * passed through `toastOptions.classNames` lose on source order. Its default is a 50%
+ * radius, which is the one circle this system does not permit. Written here rather
+ * than as a utility because it has to out-specify a third-party rule we don't control.
+ */
+[data-sonner-toast] [data-close-button] {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Respect a reduced-motion preference: transitions here are affordances, not
+   essential information, so they can be dropped entirely. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- No `dark` class on <html>: cream is the default theme, dark is the opt-in variant. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="TixLock — reserve seats for films and live music with a live, real-time seat map."
+    />
+    <title>TixLock</title>
+    <!--
+      Type pairing from the Stitch design system:
+        Anton      — display face. Condensed, single weight (400), high impact.
+                     Never request a bold weight; it synthesises and smears.
+        Public Sans — body and all UI text. Three weights cover body (400),
+                     actions (600) and status tags (700).
+      Two families, four files total, replacing the previous Inter + Sora pair.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Public+Sans:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Inline SVG favicon: avoids a 404 for /favicon.ico without shipping a binary. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c3aed'/%3E%3Cpath d='M9 12.5h14M9 16h14M9 19.5h9' stroke='white' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <script>
+      // Applied before first paint so a dark-mode user never sees a cream flash.
+      // Mirrors the logic in src/store/theme.ts; kept inline deliberately because
+      // any module-loaded version runs too late to prevent the flash.
+      //
+      // Cream is the default, so the test is inverted from before: an explicit
+      // stored choice wins, then an OS preference for dark, and everything else —
+      // including "no-preference" — lands on cream.
+      (function () {
+        try {
+          var stored = localStorage.getItem('tb-theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.classList.toggle('dark', theme === 'dark');
+        } catch (e) {
+          /* localStorage unavailable (private mode) — fall back to the cream default */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
