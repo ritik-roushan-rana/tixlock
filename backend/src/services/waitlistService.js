@@ -61,6 +61,29 @@ const { SEAT_DETAIL_SQL } = require('./holdService');
  */
 const generateOfferToken = () => crypto.randomBytes(32).toString('hex');
 
+/**
+ * Allocation logging.
+ *
+ * Silenced under NODE_ENV=test so 43 suite cases do not bury real assertions in
+ * noise, matching how sweeper.js and mailer.js already behave.
+ */
+const log = (...args) => {
+  if (!config.isTest) console.log(...args);
+};
+
+/**
+ * Offer tokens are the whole authorisation for the emailed link, so the full value
+ * must never reach the logs — anyone who could read it could claim the seat. A
+ * short prefix is enough to correlate a log line with a row in `waitlist`.
+ */
+const tokenTag = (token) => `${token.slice(0, 8)}…`;
+
+/** `A5`, for log lines. Falls back to the row id when the label is unavailable. */
+const seatTag = (seat) =>
+  seat && seat.row_label != null && seat.seat_number != null
+    ? `${seat.row_label}${seat.seat_number}`
+    : `#${seat && seat.id}`;
+
 /* ---------------------------------------------------------------------------
  * Joining the queue
  * ------------------------------------------------------------------------- */
@@ -237,14 +260,25 @@ async function placeSeat(client, seat, excludeCustomerIds = []) {
   // Nobody waiting -> the seat goes back on general sale. This is the only path
   // that returns a seat to 'available' after a cancellation.
   if (!next) {
-    await client.query(
-      `UPDATE show_seats
+    // The label is resolved in the same statement via a scalar subquery so that all
+    // three callers of placeSeat get loggable seat names without each having to
+    // join venue_seats itself.
+    const { rows } = await client.query(
+      `UPDATE show_seats ss
           SET status = 'available', held_by = NULL, hold_expires_at = NULL
-        WHERE id = $1`,
+        WHERE ss.id = $1
+      RETURNING (SELECT vs.row_label FROM venue_seats vs WHERE vs.id = ss.venue_seat_id) AS row_label,
+                (SELECT vs.seat_number FROM venue_seats vs WHERE vs.id = ss.venue_seat_id) AS seat_number`,
       [seat.id]
     );
-    return { outcome: 'released', seatId: seat.id };
+    const label = seatTag({ ...seat, ...rows[0] });
+    log(`[waitlist] seat ${label} returned to general sale — no one waiting in ${seat.category}`);
+    return { outcome: 'released', seatId: seat.id, seatLabel: label };
   }
+
+  log(
+    `[waitlist] selected customer ${next.customer_id} from ${seat.category} queue (entry ${next.id})`
+  );
 
   // Someone is waiting -> reserve the seat for them.
   const token = generateOfferToken();
@@ -261,15 +295,21 @@ async function placeSeat(client, seat, excludeCustomerIds = []) {
    * this person is reacting to an email, not sitting at a checkout screen.
    */
   const { rows: seatRows } = await client.query(
-    `UPDATE show_seats
+    `UPDATE show_seats ss
         SET status = 'offered',
             held_by = $2,
             hold_expires_at = now() + ($3 || ' minutes')::interval
-      WHERE id = $1
-      RETURNING hold_expires_at`,
+      WHERE ss.id = $1
+      RETURNING ss.hold_expires_at,
+                (SELECT vs.row_label FROM venue_seats vs WHERE vs.id = ss.venue_seat_id) AS row_label,
+                (SELECT vs.seat_number FROM venue_seats vs WHERE vs.id = ss.venue_seat_id) AS seat_number`,
     [seat.id, next.customer_id, String(config.offerTtlMinutes)]
   );
   const expiresAt = seatRows[0].hold_expires_at;
+  const seatLabel = seatTag({ ...seat, ...seatRows[0] });
+
+  log(`[waitlist] created offer token ${tokenTag(token)} for seat ${seatLabel}`);
+  log(`[waitlist] seat ${seatLabel} reserved until ${new Date(expiresAt).toISOString()}`);
 
   await client.query(
     `UPDATE waitlist
@@ -284,6 +324,7 @@ async function placeSeat(client, seat, excludeCustomerIds = []) {
   return {
     outcome: 'offered',
     seatId: seat.id,
+    seatLabel,
     waitlistId: next.id,
     customer: { id: next.customer_id, email: next.email, name: next.name },
     token,
@@ -345,12 +386,14 @@ async function expireOverdueOffers() {
      * is the row that must be locked before it can be reassigned.
      */
     const { rows: expired } = await client.query(
-      `SELECT ss.id, ss.show_id, ss.category, ss.held_by
+      `SELECT ss.id, ss.show_id, ss.category, ss.held_by,
+              vs.row_label, vs.seat_number
          FROM show_seats ss
+         JOIN venue_seats vs ON vs.id = ss.venue_seat_id
         WHERE ss.status = 'offered'
           AND ss.hold_expires_at < now()
         ORDER BY ss.id
-        FOR UPDATE SKIP LOCKED`
+        FOR UPDATE OF ss SKIP LOCKED`
     );
 
     if (expired.length === 0) {
@@ -363,6 +406,10 @@ async function expireOverdueOffers() {
     const touchedSeatIds = [];
 
     for (const seat of expired) {
+      log(
+        `[waitlist] offer expired for seat ${seatTag(seat)} (customer ${seat.held_by}, ${seat.category}) — cascading`
+      );
+
       // Close out the lapsed entry first so placeSeat cannot hand the seat back to
       // the same person: their row is no longer 'waiting'.
       await client.query(

@@ -23,6 +23,7 @@
 
 const crypto = require('node:crypto');
 
+const config = require('../config/env');
 const { query, withTransaction } = require('../config/db');
 const { seatConflict, notFound, forbidden, conflict, badRequest } = require('../lib/errors');
 const realtime = require('../realtime/io');
@@ -416,9 +417,10 @@ async function cancelBooking(bookingId, viewer) {
 
     // Lock the seats being released, in id order for consistent lock ordering.
     const { rows: seats } = await client.query(
-      `SELECT ss.id, ss.show_id, ss.category
+      `SELECT ss.id, ss.show_id, ss.category, vs.row_label, vs.seat_number
          FROM booking_seats bs
          JOIN show_seats ss ON ss.id = bs.show_seat_id
+         JOIN venue_seats vs ON vs.id = ss.venue_seat_id
         WHERE bs.booking_id = $1
         ORDER BY ss.id
         FOR UPDATE OF ss`,
@@ -437,6 +439,12 @@ async function cancelBooking(bookingId, viewer) {
     let offeredCount = 0;
 
     for (const seat of seats) {
+      if (!config.isTest) {
+        console.log(
+          `[waitlist] seat ${seat.row_label}${seat.seat_number} released from booking ${bookingId} (${booking.booking_ref})`
+        );
+      }
+
       const outcome = await waitlistService.placeSeat(client, seat);
       if (outcome.outcome === 'offered') {
         offeredCount += 1;

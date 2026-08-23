@@ -740,3 +740,199 @@ describe('concurrent seat release does not double-serve one queue entry', () => 
     expect(wl[0].n).toBe(2);
   });
 });
+
+/**
+ * The waitlist allocation contract, stated end to end as five explicit scenarios.
+ *
+ * Much of this is covered piecemeal above; this block exists so the guarantee can be
+ * read and re-verified as a single specification rather than reassembled from
+ * thirty separate cases. Two assertions here were genuinely missing beforehand:
+ * that the seat map never reports a live OFFERED seat as available, and that a hold
+ * attempt on one fails with the SEATS_UNAVAILABLE *code* rather than merely a 409.
+ */
+describe('waitlist allocation contract', () => {
+  /** Sell out Premium down to a single seat, then book that last seat as `owner`. */
+  async function bookLastPremiumSeat() {
+    const [first, last] = premium();
+    // Park the first seat on a different customer so only `last` is in play.
+    await hold(carol, [first.id]);
+    await book(carol, [first.id]);
+
+    await hold(owner, [last.id]);
+    const res = await book(owner, [last.id]);
+    expect(res.status).toBe(201);
+    return { bookingId: res.body.booking.id, seatId: last.id };
+  }
+
+  const seatRow = (seatId) =>
+    query(
+      `SELECT status::text AS status, held_by, hold_expires_at
+         FROM show_seats WHERE id = $1`,
+      [seatId]
+    ).then((r) => r.rows[0]);
+
+  const seatMapEntry = async (seatId) => {
+    const res = await api().get(`/api/shows/${ctx.show.id}/seats`);
+    return res.body.rows.flatMap((r) => r.seats).find((s) => s.id === seatId);
+  };
+
+  it('Test 1 — cancelling the last seat offers it to the oldest waiter, not the public', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+
+    // Category is sold out, so joining is permitted.
+    expect((await join(bob)).status).toBe(201);
+
+    const res = await cancel(owner, bookingId);
+    expect(res.status).toBe(200);
+    expect(res.body.seats_offered_to_waitlist).toBe(1);
+    expect(res.body.seats_released).toBe(0);
+
+    // BOOKED -> OFFERED, reserved for Bob, never available.
+    const seat = await seatRow(seatId);
+    expect(seat.status).toBe('offered');
+    expect(seat.held_by).toBe(bob.id);
+    expect(new Date(seat.hold_expires_at).getTime()).toBeGreaterThan(Date.now());
+
+    // Bob's queue entry carries a single-use token and points at this seat.
+    const { rows: wl } = await query(
+      `SELECT status::text AS status, offer_token, offered_show_seat_id
+         FROM waitlist WHERE customer_id = $1`,
+      [bob.id]
+    );
+    expect(wl[0].status).toBe('offered');
+    expect(wl[0].offer_token).toMatch(/^[0-9a-f]{64}$/);
+    expect(wl[0].offered_show_seat_id).toBe(seatId);
+
+    // Bob is emailed the offer.
+    await flush();
+    const mail = mailer.getOutbox().find((m) => m.to === bob.email);
+    expect(mail).toBeDefined();
+    expect(mail.text).toContain('/offer?token=');
+
+    // Customer C can neither hold nor book it.
+    expect((await hold(alice, [seatId])).status).toBe(409);
+    expect((await book(alice, [seatId])).status).toBe(409);
+  });
+
+  it('Test 2 — an ignored offer cascades to the next waiter, still not the public', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+    await join(bob); // first in queue
+    await join(alice); // second
+    await cancel(owner, bookingId);
+
+    expect((await seatRow(seatId)).held_by).toBe(bob.id);
+
+    await expireOffers();
+    await sweeper.runOnce();
+
+    const seat = await seatRow(seatId);
+    expect(seat.status).toBe('offered'); // not 'available'
+    expect(seat.held_by).toBe(alice.id); // cascaded to the next in line
+
+    const { rows } = await query(
+      `SELECT customer_id, status::text AS status FROM waitlist WHERE show_id = $1
+        ORDER BY joined_at, id`,
+      [ctx.show.id]
+    );
+    expect(rows).toEqual([
+      { customer_id: bob.id, status: 'expired' },
+      { customer_id: alice.id, status: 'offered' },
+    ]);
+  });
+
+  it('Test 3 — with nobody waiting, a cancellation returns the seat to AVAILABLE', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+
+    const res = await cancel(owner, bookingId);
+    expect(res.status).toBe(200);
+    expect(res.body.seats_released).toBe(1);
+    expect(res.body.seats_offered_to_waitlist).toBe(0);
+
+    const seat = await seatRow(seatId);
+    expect(seat.status).toBe('available');
+    expect(seat.held_by).toBeNull();
+    expect(seat.hold_expires_at).toBeNull();
+
+    // And it is genuinely bookable by anyone again.
+    expect((await hold(alice, [seatId])).status).toBe(201);
+  });
+
+  it('Test 3b — the seat returns to AVAILABLE only once the queue is exhausted', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+    await join(bob);
+    await cancel(owner, bookingId);
+
+    // Bob lets it lapse and he is the only waiter, so now it may go on general sale.
+    await expireOffers();
+    await sweeper.runOnce();
+
+    const seat = await seatRow(seatId);
+    expect(seat.status).toBe('available');
+    expect(seat.held_by).toBeNull();
+  });
+
+  it('Test 4 — two simultaneous claims of one offer: exactly one succeeds', async () => {
+    const { bookingId } = await bookLastPremiumSeat();
+    await join(bob);
+    await cancel(owner, bookingId);
+
+    const { rows } = await query('SELECT offer_token FROM waitlist WHERE customer_id = $1', [bob.id]);
+    const token = rows[0].offer_token;
+
+    const accept = () =>
+      api().post(`/api/waitlist/offers/${token}/accept`).set(auth(bob)).send();
+    const [a, b] = await Promise.all([accept(), accept()]);
+
+    const codes = [a.status, b].map((x) => (typeof x === 'number' ? x : x.status)).sort();
+    expect(codes).toEqual([200, 409]);
+
+    // Exactly one fulfilled entry, and the token is burned.
+    const { rows: after } = await query(
+      `SELECT status::text AS status, offer_token FROM waitlist WHERE customer_id = $1`,
+      [bob.id]
+    );
+    expect(after[0].status).toBe('fulfilled');
+    expect(after[0].offer_token).toBeNull();
+  });
+
+  it('Test 5 — holding an OFFERED seat fails with 409 SEATS_UNAVAILABLE naming the seat', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+    await join(bob);
+    await cancel(owner, bookingId);
+
+    const res = await hold(alice, [seatId]);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('SEATS_UNAVAILABLE');
+    expect(res.body.error.details.unavailableSeatIds).toContain(seatId);
+
+    // Alice holds nothing at all — the rejection is all-or-nothing.
+    const { rows } = await query(
+      "SELECT count(*)::int AS n FROM show_seats WHERE held_by = $1 AND status = 'held'",
+      [alice.id]
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('Test 6 — the seat map never reports a live OFFERED seat as available', async () => {
+    const { bookingId, seatId } = await bookLastPremiumSeat();
+    await join(bob);
+    await cancel(owner, bookingId);
+
+    // Anonymous view: the seat is not available, and the holder is not disclosed.
+    const entry = await seatMapEntry(seatId);
+    expect(entry.status).not.toBe('available');
+    expect(entry.status).toBe('offered');
+    expect(entry.held_by).toBeUndefined();
+
+    // Availability counts must not include it.
+    const avail = await api().get(`/api/shows/${ctx.show.id}/availability`);
+    const premiumRow = avail.body.categories.find((a) => a.category === 'Premium');
+    expect(premiumRow.available).toBe(0);
+    expect(premiumRow.sold_out).toBe(true);
+
+    // Once the offer lapses, the effective status flips to available at read time
+    // even before the sweeper tidies the row — that is the documented behaviour.
+    await expireOffers();
+    expect((await seatMapEntry(seatId)).status).toBe('available');
+  });
+});
