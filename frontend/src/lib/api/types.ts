@@ -493,6 +493,7 @@ export interface WaitlistMineItem {
   offer_token: string | null;
   date: ApiDate;
   time: ApiTime;
+  event_id: number;
   event_title: string;
   event_type: EventType;
   venue_name: string;

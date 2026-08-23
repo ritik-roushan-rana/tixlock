@@ -172,7 +172,9 @@ async function listMyWaitlist(customerId) {
     `SELECT w.id, w.show_id, w.category, w.status::text AS status, w.joined_at,
             w.offer_expires_at, w.offer_token,
             s.date, s.time,
-            e.title AS event_title, e.type::text AS event_type,
+            -- event_id is selected so the client can build the poster URL and link
+            -- back to the event, the same way booking history does.
+            e.id AS event_id, e.title AS event_title, e.type::text AS event_type,
             v.name AS venue_name,
             -- Same (joined_at, id) tuple comparison as joinWaitlist, so the position
             -- shown here matches the order seats are actually handed out in.
