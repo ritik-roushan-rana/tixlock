@@ -183,6 +183,22 @@ describe('GET /api/health', () => {
     expect(res.body.holdTtlMinutes).toEqual(expect.any(Number));
     expect(res.body.offerTtlMinutes).toEqual(expect.any(Number));
   });
+
+  it('names the mail transport without leaking a credential', async () => {
+    const res = await api().get('/api/health');
+    expect(['mailjet', 'smtp', 'console (not sent)']).toContain(res.body.mail);
+
+    // The point of the field is diagnosis, not disclosure: assert the response body
+    // contains no part of whatever keys the environment happens to hold.
+    const serialised = JSON.stringify(res.body);
+    for (const secret of [
+      process.env.MJ_APIKEY_PRIVATE,
+      process.env.MJ_APIKEY_PUBLIC,
+      process.env.SMTP_PASS,
+    ]) {
+      if (secret) expect(serialised).not.toContain(secret);
+    }
+  });
 });
 
 describe('unmatched API routes', () => {

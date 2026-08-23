@@ -47,6 +47,15 @@ function createApp() {
         database: dbOk ? 'connected' : 'unreachable',
         holdTtlMinutes: config.holdTtlMinutes,
         offerTtlMinutes: config.offerTtlMinutes,
+        // Which delivery path is configured — the name only, never a credential.
+        //
+        // Worth exposing because "mail is silently not being sent" is otherwise
+        // invisible from outside the process: a misconfigured deploy reports a
+        // perfectly healthy service while every confirmation goes to a console
+        // transport. Answering it previously meant reading boot logs, and only after
+        // something had already tried to send.
+        mail:
+          config.mailjet.enabled ? 'mailjet' : config.smtp.enabled ? 'smtp' : 'console (not sent)',
       });
     })
   );
