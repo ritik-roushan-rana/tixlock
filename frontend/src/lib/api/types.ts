@@ -236,6 +236,16 @@ export interface CreateEventPayload {
   type: EventType;
   venue_id: number;
   description?: string;
+  /**
+   * Creates the event's first showing in the same transaction.
+   *
+   * Present because an organiser thinks in listings: a title, a venue, a date, a time
+   * and prices. The event/showing split still exists underneath — it has to, since one
+   * event carries many showings at different times and prices — but it is not something
+   * the first-run flow should make them assemble by hand. Omit this and you get a
+   * showless event, which is still valid and can be given showings later.
+   */
+  first_show?: CreateShowPayload;
 }
 
 /** Category name -> price. Must cover exactly the venue's categories. */
@@ -620,6 +630,8 @@ export interface EventReport {
     type: EventType;
     organiser_id: number;
     venue_id: number;
+    venue_name: string;
+    description: string;
   };
   shows: EventReportShow[];
   categories: EventReportCategory[];

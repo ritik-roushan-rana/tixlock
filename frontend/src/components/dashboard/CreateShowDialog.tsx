@@ -50,10 +50,20 @@ export function CreateShowDialog({
   events,
   defaultEventId,
   trigger,
+  /**
+   * Render the event as fixed context instead of a picker.
+   *
+   * Used from an event's own page, where the event is already the subject of the
+   * screen — asking the organiser to select it again from a dropdown invites picking
+   * the wrong one, and reads as though this dialog belongs to the dashboard rather
+   * than to the event they are looking at.
+   */
+  lockEvent = false,
 }: {
   events: EventListItem[];
   defaultEventId?: number;
   trigger?: React.ReactNode;
+  lockEvent?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -170,27 +180,46 @@ export function CreateShowDialog({
           className="space-y-4"
           noValidate
         >
-          <div className="space-y-1.5">
-            <Label htmlFor="show-event">Event</Label>
-            <Select
-              value={form.watch('eventId') || undefined}
-              onValueChange={(value) => form.setValue('eventId', value)}
-            >
-              <SelectTrigger id="show-event">
-                <SelectValue placeholder="Choose an event" />
-              </SelectTrigger>
-              <SelectContent>
-                {events.map((event) => (
-                  <SelectItem key={event.id} value={String(event.id)}>
-                    {event.title} — {event.venue_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {events.length === 0 ? (
-              <p className="text-xs text-warning">Create an event first.</p>
-            ) : null}
-          </div>
+          {lockEvent ? (
+            /* Contextual: the event and its venue are stated, not chosen. Both are
+               fixed by where the dialog was opened from. */
+            <div className="grid gap-3 border border-border-strong bg-background p-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <p className="eyebrow text-muted-foreground">Event</p>
+                <p className="truncate text-sm font-semibold">
+                  {selectedEvent?.title ?? '—'}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="eyebrow text-muted-foreground">Venue</p>
+                <p className="truncate text-sm font-semibold">
+                  {selectedEvent?.venue_name ?? venueQuery.data?.name ?? '—'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="show-event">Event</Label>
+              <Select
+                value={form.watch('eventId') || undefined}
+                onValueChange={(value) => form.setValue('eventId', value)}
+              >
+                <SelectTrigger id="show-event">
+                  <SelectValue placeholder="Choose an event" />
+                </SelectTrigger>
+                <SelectContent>
+                  {events.map((event) => (
+                    <SelectItem key={event.id} value={String(event.id)}>
+                      {event.title} — {event.venue_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {events.length === 0 ? (
+                <p className="text-xs text-warning">Create an event first.</p>
+              ) : null}
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">

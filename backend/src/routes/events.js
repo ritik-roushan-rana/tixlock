@@ -72,7 +72,7 @@ router.post(
   requireAuth,
   requireRole('organiser', 'admin'),
   asyncHandler(async (req, res) => {
-    const event = await eventService.createEvent({
+    const base = {
       title: v.str(req.body.title, 'title', { max: 200 }),
       type: v.oneOf(req.body.type, 'type', eventService.EVENT_TYPES),
       description:
@@ -81,8 +81,38 @@ router.post(
           : v.str(req.body.description, 'description', { min: 0, max: 2000 }),
       venueId: v.id(req.body.venue_id, 'venue_id'),
       organiserId: req.user.id,
-    });
+    };
 
+    /**
+     * Optional first showing, so "create an event" is one action for an organiser while
+     * staying an event + a show + its seats underneath.
+     *
+     * Optional rather than required: the two-step path is still valid and still used by
+     * scripts and tests, so existing callers are unaffected. When supplied, the event,
+     * the show, its seats and its pricing all commit together — a browser doing this as
+     * two calls leaves a showless event behind whenever the second one fails.
+     *
+     * Validated with the same helpers as POST /:id/shows, so the rules cannot drift
+     * between the one-step and two-step paths.
+     */
+    if (req.body.first_show !== undefined) {
+      const first = req.body.first_show;
+      if (first === null || typeof first !== 'object' || Array.isArray(first)) {
+        throw badRequest('first_show must be an object with date, time and pricing');
+      }
+      const created = await eventService.createEventWithFirstShow({
+        ...base,
+        firstShow: {
+          date: v.dateStr(first.date, 'first_show.date'),
+          time: v.timeStr(first.time, 'first_show.time'),
+          pricing: parsePricing(first.pricing),
+        },
+      });
+      res.status(201).json({ event: created.event, show: created.show });
+      return;
+    }
+
+    const event = await eventService.createEvent(base);
     res.status(201).json({ event });
   })
 );

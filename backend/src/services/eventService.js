@@ -230,77 +230,159 @@ async function assertEventOwner(eventId, user) {
  * surfaces at checkout, so it is rejected at creation instead.
  */
 async function createShow({ eventId, date, time, pricing }) {
+  return withTransaction((client) => createShowInTx(client, { eventId, date, time, pricing }));
+}
+
+/**
+ * The body of createShow, minus the transaction.
+ *
+ * Extracted so an event and its first showing can be created together in a single
+ * transaction (see createEventWithFirstShow) without a second copy of the seat
+ * generation, category validation or duplicate-slot handling. There is exactly one
+ * implementation of "materialise a show's seats" and both entry points run it.
+ */
+async function createShowInTx(client, { eventId, date, time, pricing }) {
+  // Lock the event row so a concurrent venue-layout change or duplicate show
+  // creation for the same event serialises behind us.
+  const { rows: eventRows } = await client.query(
+    'SELECT id, venue_id FROM events WHERE id = $1 FOR UPDATE',
+    [eventId]
+  );
+  const event = eventRows[0];
+  if (!event) throw notFound(`Event ${eventId} not found`);
+
+  // What categories does this venue actually have?
+  const { rows: catRows } = await client.query(
+    'SELECT DISTINCT category FROM venue_seats WHERE venue_id = $1 ORDER BY category',
+    [event.venue_id]
+  );
+  const venueCategories = catRows.map((r) => r.category);
+  if (venueCategories.length === 0) {
+    throw conflict('The venue for this event has no seat layout, so a show cannot be created');
+  }
+
+  const pricedCategories = new Set(Object.keys(pricing));
+  const missing = venueCategories.filter((c) => !pricedCategories.has(c));
+  if (missing.length > 0) {
+    throw badRequest(
+      `Pricing is missing for category/categories: ${missing.join(', ')}. ` +
+        `This venue has these categories: ${venueCategories.join(', ')}.`,
+      { missingCategories: missing, venueCategories }
+    );
+  }
+  const unknown = [...pricedCategories].filter((c) => !venueCategories.includes(c));
+  if (unknown.length > 0) {
+    throw badRequest(
+      `Pricing supplied for category/categories that do not exist at this venue: ${unknown.join(', ')}`,
+      { unknownCategories: unknown, venueCategories }
+    );
+  }
+
+  let show;
+  try {
+    const { rows } = await client.query(
+      'INSERT INTO shows (event_id, date, time) VALUES ($1, $2, $3) RETURNING *',
+      [eventId, date, time]
+    );
+    show = rows[0];
+  } catch (err) {
+    if (err.code === '23505') {
+      throw conflict(`This event already has a show on ${date} at ${time}`);
+    }
+    throw err;
+  }
+
+  // Generate inventory. One INSERT ... SELECT rather than a loop: a 500-seat
+  // venue becomes a single statement instead of 500 round trips, and it cannot
+  // interleave with anything because it is one atomic statement.
+  const { rowCount: seatsCreated } = await client.query(
+    `INSERT INTO show_seats (show_id, venue_seat_id, category, status)
+     SELECT $1, vs.id, vs.category, 'available'
+       FROM venue_seats vs
+      WHERE vs.venue_id = $2`,
+    [show.id, event.venue_id]
+  );
+
+  for (const [category, price] of Object.entries(pricing)) {
+    await client.query(
+      'INSERT INTO show_pricing (show_id, category, price) VALUES ($1, $2, $3)',
+      [show.id, category, price]
+    );
+  }
+
+  return { ...show, seats_created: seatsCreated, pricing };
+}
+
+/**
+ * Create an event and its first showing atomically.
+ *
+ * Exists because "create an event" is one action to an organiser: a listing with a
+ * venue, a date, a time and prices. Internally it is still an event row, a show row
+ * and one show_seats row per venue seat — the domain model is unchanged — but the
+ * organiser should not have to know that, nor be able to end up half-finished.
+ *
+ * Transactional for exactly that reason. Doing this as two API calls from the browser
+ * would leave a showless event behind whenever the second call failed (a duplicate
+ * slot, a missing price, a dropped connection), which is the state that used to be
+ * unrecoverable in the UI.
+ *
+ * Delegates to createShowInTx, so category validation and seat generation are not
+ * reimplemented here.
+ */
+async function createEventWithFirstShow({
+  title,
+  type,
+  description,
+  venueId,
+  organiserId,
+  firstShow,
+}) {
   return withTransaction(async (client) => {
-    // Lock the event row so a concurrent venue-layout change or duplicate show
-    // creation for the same event serialises behind us.
-    const { rows: eventRows } = await client.query(
-      'SELECT id, venue_id FROM events WHERE id = $1 FOR UPDATE',
-      [eventId]
+    await assertVenueUsable(client, venueId);
+
+    const { rows } = await client.query(
+      `INSERT INTO events (title, type, organiser_id, venue_id, description)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [title, type, organiserId, venueId, description]
     );
-    const event = eventRows[0];
-    if (!event) throw notFound(`Event ${eventId} not found`);
+    const event = rows[0];
 
-    // What categories does this venue actually have?
-    const { rows: catRows } = await client.query(
-      'SELECT DISTINCT category FROM venue_seats WHERE venue_id = $1 ORDER BY category',
-      [event.venue_id]
-    );
-    const venueCategories = catRows.map((r) => r.category);
-    if (venueCategories.length === 0) {
-      throw conflict('The venue for this event has no seat layout, so a show cannot be created');
-    }
+    const show = await createShowInTx(client, {
+      eventId: event.id,
+      date: firstShow.date,
+      time: firstShow.time,
+      pricing: firstShow.pricing,
+    });
 
-    const pricedCategories = new Set(Object.keys(pricing));
-    const missing = venueCategories.filter((c) => !pricedCategories.has(c));
-    if (missing.length > 0) {
-      throw badRequest(
-        `Pricing is missing for category/categories: ${missing.join(', ')}. ` +
-          `This venue has these categories: ${venueCategories.join(', ')}.`,
-        { missingCategories: missing, venueCategories }
-      );
-    }
-    const unknown = [...pricedCategories].filter((c) => !venueCategories.includes(c));
-    if (unknown.length > 0) {
-      throw badRequest(
-        `Pricing supplied for category/categories that do not exist at this venue: ${unknown.join(', ')}`,
-        { unknownCategories: unknown, venueCategories }
-      );
-    }
-
-    let show;
-    try {
-      const { rows } = await client.query(
-        'INSERT INTO shows (event_id, date, time) VALUES ($1, $2, $3) RETURNING *',
-        [eventId, date, time]
-      );
-      show = rows[0];
-    } catch (err) {
-      if (err.code === '23505') {
-        throw conflict(`This event already has a show on ${date} at ${time}`);
-      }
-      throw err;
-    }
-
-    // Generate inventory. One INSERT ... SELECT rather than a loop: a 500-seat
-    // venue becomes a single statement instead of 500 round trips, and it cannot
-    // interleave with anything because it is one atomic statement.
-    const { rowCount: seatsCreated } = await client.query(
-      `INSERT INTO show_seats (show_id, venue_seat_id, category, status)
-       SELECT $1, vs.id, vs.category, 'available'
-         FROM venue_seats vs
-        WHERE vs.venue_id = $2`,
-      [show.id, event.venue_id]
-    );
-
-    for (const [category, price] of Object.entries(pricing)) {
-      await client.query(
-        'INSERT INTO show_pricing (show_id, category, price) VALUES ($1, $2, $3)',
-        [show.id, category, price]
-      );
-    }
-
-    return { ...show, seats_created: seatsCreated, pricing };
+    return { event, show };
   });
+}
+
+/**
+ * A venue must exist and have a seat layout before anything can be scheduled there.
+ *
+ * Takes a client so it can run inside the creation transaction — an event created
+ * against a venue whose layout is being emptied concurrently would otherwise generate
+ * zero seats and look like a platform bug to a customer.
+ */
+async function assertVenueUsable(client, venueId) {
+  const { rows } = await client.query(
+    `SELECT v.id, count(vs.id)::int AS seat_count
+       FROM venues v
+       LEFT JOIN venue_seats vs ON vs.venue_id = v.id
+      WHERE v.id = $1
+      GROUP BY v.id`,
+    [venueId]
+  );
+  const venue = rows[0];
+  if (!venue) throw notFound(`Venue ${venueId} not found`);
+  if (venue.seat_count === 0) {
+    throw conflict(
+      'That venue has no seat layout yet. Ask an admin to define its seat layout before creating events there.'
+    );
+  }
+  return venue;
 }
 
 async function getShow(showId) {
@@ -344,6 +426,7 @@ async function deleteShow(showId) {
 module.exports = {
   EVENT_TYPES,
   createEvent,
+  createEventWithFirstShow,
   listEvents,
   getEvent,
   getEventWithShows,

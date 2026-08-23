@@ -82,6 +82,73 @@ describe('POST /api/events', () => {
   });
 });
 
+describe('POST /api/events with first_show — one-step creation', () => {
+  it('creates the event, its first showing and its seats in one call', async () => {
+    const res = await api()
+      .post('/api/events')
+      .set(auth(organiser))
+      .send({
+        title: 'One Step Event',
+        type: 'movie',
+        venue_id: venue.id,
+        first_show: { date: '2099-06-01', time: '19:30', pricing: { Premium: 300, Standard: 200 } },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.event.title).toBe('One Step Event');
+    expect(res.body.show.seats_created).toBeGreaterThan(0);
+
+    // The showing really belongs to the new event, and its seats really exist.
+    const detail = await api().get(`/api/events/${res.body.event.id}`);
+    expect(detail.body.event.shows).toHaveLength(1);
+    expect(detail.body.event.shows[0].total_seats).toBe(res.body.show.seats_created);
+
+    // And it is immediately bookable, i.e. visible to customers.
+    const publicList = await api().get('/api/events?q=One+Step+Event');
+    expect(publicList.body.events.map((e) => e.id)).toContain(res.body.event.id);
+  });
+
+  it('rolls the event back when the first showing is invalid', async () => {
+    const before = (await query('SELECT count(*)::int AS n FROM events')).rows[0].n;
+
+    const res = await api()
+      .post('/api/events')
+      .set(auth(organiser))
+      .send({
+        title: 'Should Not Exist',
+        type: 'movie',
+        venue_id: venue.id,
+        // Premium deliberately omitted, which createShow rejects.
+        first_show: { date: '2099-06-02', time: '19:30', pricing: { Standard: 200 } },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.missingCategories).toContain('Premium');
+
+    // No half-created event may survive.
+    const after = (await query('SELECT count(*)::int AS n FROM events')).rows[0].n;
+    expect(after).toBe(before);
+    const orphan = await query('SELECT id FROM events WHERE title = $1', ['Should Not Exist']);
+    expect(orphan.rows).toHaveLength(0);
+  });
+
+  it('still supports the two-step path, so existing callers keep working', async () => {
+    const created = await api()
+      .post('/api/events')
+      .set(auth(organiser))
+      .send({ title: 'Two Step Event', type: 'concert', venue_id: venue.id });
+    expect(created.status).toBe(201);
+    expect(created.body.show).toBeUndefined();
+
+    const show = await api()
+      .post(`/api/events/${created.body.event.id}/shows`)
+      .set(auth(organiser))
+      .send({ date: '2099-06-03', time: '20:00', pricing: { Premium: 300, Standard: 200 } });
+    expect(show.status).toBe(201);
+    expect(show.body.show.seats_created).toBeGreaterThan(0);
+  });
+});
+
 describe('POST /api/events/:id/shows — show_seats generation', () => {
   async function createEventId(as = organiser) {
     const res = await newEvent(as);

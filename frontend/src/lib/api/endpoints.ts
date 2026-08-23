@@ -128,7 +128,24 @@ export const eventsApi = {
     return data.event;
   },
 
-  create: async (payload: CreateEventPayload): Promise<EventListItem> => {
+  /**
+   * Create an event, optionally with its first showing.
+   *
+   * Returns the show too when `first_show` was supplied, so the caller can report how
+   * many seats were generated instead of a bare "created".
+   */
+  create: async (
+    payload: CreateEventPayload
+  ): Promise<{ event: EventListItem; show?: CreatedShow }> => {
+    const { data } = await http.post<{ event: EventListItem; show?: CreatedShow }>(
+      '/events',
+      payload
+    );
+    return { event: data.event, show: data.show };
+  },
+
+  /** Kept for callers that only need the event back. */
+  createEventOnly: async (payload: CreateEventPayload): Promise<EventListItem> => {
     const { data } = await http.post<{ event: EventListItem }>('/events', payload);
     return data.event;
   },

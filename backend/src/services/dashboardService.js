@@ -127,8 +127,14 @@ async function getOrganiserSummary(organiserId, { includeAll = false } = {}) {
 
 /** Assert the caller may view this event's figures. */
 async function assertEventVisible(eventId, viewer) {
+  // venue_name is joined in so the organiser's event page can name the venue without a
+  // second request — it is shown in the header and in the "add showing" context panel.
   const { rows } = await query(
-    'SELECT id, title, type::text AS type, organiser_id, venue_id FROM events WHERE id = $1',
+    `SELECT e.id, e.title, e.type::text AS type, e.organiser_id, e.venue_id,
+            v.name AS venue_name, e.description
+       FROM events e
+       JOIN venues v ON v.id = e.venue_id
+      WHERE e.id = $1`,
     [eventId]
   );
   const event = rows[0];

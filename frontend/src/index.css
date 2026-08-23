@@ -88,7 +88,11 @@
     --destructive-foreground: 0 0% 100%;
     --success: 142 72% 29%;
     --success-foreground: 0 0% 100%;
-    --warning: 26 90% 37%;
+    /* Deepened from 37% lightness: as text it only ever appears at 12px, where AA
+       demands 4.5:1, and 37% gave 4.34:1 on --card and 3.91:1 on --card-alt. Same hue
+       and saturation, so the signal reads identically — it just clears the bar on every
+       surface it can land on (6.05:1 bg, 5.44:1 card, 4.91:1 card-alt). */
+    --warning: 26 90% 32%;
     --warning-foreground: 0 0% 100%;
 
     --ring: 223.3 100% 37.3%; /* cobalt focus ring, 8.90:1 on cream */

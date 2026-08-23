@@ -1,6 +1,6 @@
 import { NavLink, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ExternalLink, Users } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, ExternalLink, Users } from 'lucide-react';
 
 import { dashboardApi } from '@/lib/api/endpoints';
 import { queryKeys } from '@/lib/queryKeys';
@@ -21,6 +21,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { ShowRevenueChart } from '@/components/dashboard/RevenueChart';
+import { CreateShowDialog } from '@/components/dashboard/CreateShowDialog';
+import type { EventListItem } from '@/lib/api/types';
 
 /**
  * Per-event report: showings, categories, waitlist depth and the attendee list.
@@ -75,22 +77,60 @@ export default function OrganiserEventPage() {
 
   const { event, shows, categories, waitlist, totals } = reportQuery.data;
 
+  /**
+   * The one-element event list CreateShowDialog needs.
+   *
+   * The dialog derives its pricing fields from the event's venue, so it needs
+   * `venue_id`. The report's event row carries it; the remaining EventListItem fields
+   * are not read in locked mode, so they are filled in from what the report knows
+   * rather than fetching the browse list again just to add a showing.
+   */
+  const showEventContext = [
+    {
+      ...event,
+      show_count: shows.length,
+      next_show_date: shows[0]?.date ?? null,
+      from_price: null,
+    },
+  ] as unknown as EventListItem[];
+
   return (
     <div className="space-y-6">
       <BackLink />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
+        <div className="min-w-0 space-y-1">
           <Badge variant={event.type === 'movie' ? 'default' : 'outline'}>
             {event.type}
           </Badge>
           <h1 className="heading text-display-lg">{event.title}</h1>
+          {/* Event information, per the management view: what this listing actually is,
+              before the per-showing numbers below. */}
+          <p className="text-body-sm text-muted-foreground">{event.venue_name}</p>
+          {event.description ? (
+            <p className="max-w-2xl text-body-sm text-muted-foreground">{event.description}</p>
+          ) : null}
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <NavLink to={`/events/${event.id}`}>
-            <ExternalLink /> Customer view
-          </NavLink>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {/* The event is the subject of this page, so adding a showing here needs no
+              picker — this is the screen where one event holding many showings is
+              visible, and where that action belongs. */}
+          <CreateShowDialog
+            events={showEventContext}
+            defaultEventId={event.id}
+            lockEvent
+            trigger={
+              <Button>
+                <CalendarPlus /> Add showing
+              </Button>
+            }
+          />
+          <Button variant="outline" asChild>
+            <NavLink to={`/events/${event.id}`}>
+              <ExternalLink /> Customer view
+            </NavLink>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -119,7 +159,23 @@ export default function OrganiserEventPage() {
             <CardContent className="p-0">
               {shows.length === 0 ? (
                 <div className="p-4">
-                  <EmptyState title="No showings yet" description="Add a showing from the dashboard." />
+                  <EmptyState
+                    icon={<CalendarPlus className="h-5 w-5" />}
+                    title="No showings yet"
+                    description="This event is not bookable until it has at least one showing with a date, a time and a price for every seat category."
+                    action={
+                      <CreateShowDialog
+                        events={showEventContext}
+                        defaultEventId={event.id}
+                        lockEvent
+                        trigger={
+                          <Button>
+                            <CalendarPlus /> Add showing
+                          </Button>
+                        }
+                      />
+                    }
+                  />
                 </div>
               ) : (
                 <Table>

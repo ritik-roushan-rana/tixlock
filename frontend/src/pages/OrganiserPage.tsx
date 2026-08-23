@@ -59,10 +59,13 @@ export default function OrganiserPage() {
               : 'Your events, seats sold and revenue.'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <CreateShowDialog events={myEventsQuery.data ?? []} />
-          <CreateEventDialog />
-        </div>
+        {/*
+          One primary action. "New showing" used to sit here as an equal, which put an
+          internal concept on the same footing as the thing an organiser actually
+          publishes — and implied a showing could exist independently of an event. It
+          now lives on each event, where the relationship is real.
+        */}
+        <CreateEventDialog />
       </div>
 
       {summaryQuery.isError ? (
@@ -85,10 +88,12 @@ export default function OrganiserPage() {
               icon={Ticket}
               loading={summaryQuery.isLoading}
             />
+            {/* Events counts event records; showings are reported separately beneath
+                rather than folded into the same number. */}
             <StatCard
               label="Events"
               value={totals ? String(totals.events) : undefined}
-              hint={totals ? `${totals.shows} showing${totals.shows === 1 ? '' : 's'}` : ''}
+              hint={totals ? `${totals.shows} showing${totals.shows === 1 ? '' : 's'} in total` : ''}
               icon={BarChart3}
               loading={summaryQuery.isLoading}
             />
@@ -177,7 +182,17 @@ export default function OrganiserPage() {
                             </Badge>
                           </div>
                         </TableCell>
-                        <TableCell className="tabular text-right">{event.show_count}</TableCell>
+                        <TableCell className="text-right">
+                          {/* A showless event is not an error, but it is not bookable
+                              either, so it says so instead of showing a bare 0. */}
+                          {event.show_count === 0 ? (
+                            <span className="eyebrow whitespace-nowrap text-warning">
+                              No showings yet
+                            </span>
+                          ) : (
+                            <span className="tabular">{event.show_count}</span>
+                          )}
+                        </TableCell>
                         <TableCell className="tabular text-right">
                           {event.booked_seats}/{event.total_seats}
                         </TableCell>
@@ -205,11 +220,28 @@ export default function OrganiserPage() {
                           {formatMoney(event.revenue)}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" asChild>
-                            <NavLink to={`/organiser/events/${event.id}`}>
-                              <TrendingUp /> Details
-                            </NavLink>
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            {/* Add showing is offered inline for the case that needs it
+                                most — an event with none — and always available on the
+                                event's own page. The event is fixed by context. */}
+                            {event.show_count === 0 ? (
+                              <CreateShowDialog
+                                events={myEventsQuery.data ?? []}
+                                defaultEventId={event.id}
+                                lockEvent
+                                trigger={
+                                  <Button variant="outline" size="sm">
+                                    <CalendarPlus /> Add showing
+                                  </Button>
+                                }
+                              />
+                            ) : null}
+                            <Button variant="ghost" size="sm" asChild>
+                              <NavLink to={`/organiser/events/${event.id}`}>
+                                <TrendingUp /> Manage
+                              </NavLink>
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
