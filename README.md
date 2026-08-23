@@ -289,10 +289,17 @@ waitlist over sockets, a design-system audit, and image loading performance. See
 **Frontend — Vercel.** Root directory `frontend`, framework Vite, build `npm run build`,
 output `dist`. Set `VITE_API_URL` to the Railway origin, without a `/api` suffix.
 
-**CI — GitHub Actions.** `.github/workflows/deploy-backend.yml` runs the backend suite
-against a PostgreSQL service container on pushes touching `backend/**`, then deploys to
-Railway and polls `/api/health` until it reports healthy. Needs a `RAILWAY_API_TOKEN`
-repo secret.
+**CI — GitHub Actions.** `.github/workflows/backend-tests.yml` runs the 265-test suite
+against a PostgreSQL 16 service container on pushes and PRs touching `backend/**`. It
+does not deploy: Railway has a GitHub deployment trigger on `main` set to wait for check
+suites, so this workflow is the gate and Railway does the deploying. No Railway
+credential is stored in the repository.
+
+```
+push backend/**  ->  265 tests  ->  checks green  ->  Railway builds (root dir backend)
+                                                  ->  /api/health healthcheck
+                                                  ->  traffic switches
+```
 
 ---
 
