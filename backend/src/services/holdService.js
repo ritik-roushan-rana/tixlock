@@ -194,8 +194,23 @@ async function holdSeats(showId, seatIds, customerId) {
  * Scoped to `held_by = customerId AND status = 'held'` so this can never release
  * someone else's hold, and never touches an 'offered' seat — a waitlist offer is
  * released through the waitlist flow, which has to consider the queue.
+ *
+ * Every released seat goes through `waitlistService.placeSeat`, exactly as
+ * cancellation does. This is load-bearing, not tidiness: this function used to run
+ * its own `UPDATE ... SET status = 'available'`, which meant a customer holding the
+ * last seat of a sold-out category could press "release" and put that seat straight
+ * back on general sale — the waiting customer was never offered it, never emailed,
+ * and any passer-by could take it ahead of the queue. Cancellation went through
+ * placeSeat and was correct, so the two paths disagreed and only this one was wrong.
+ *
+ * The rule is: no code path may set a seat to 'available' without first asking the
+ * queue. placeSeat is the only place allowed to make that decision.
  */
 async function releaseHold(showId, customerId, seatIds = null) {
+  // Lazily required: waitlistService requires this module for SEAT_DETAIL_SQL, so a
+  // top-level import would close a require cycle. Same reason as bookingService.
+  const waitlistService = require('./waitlistService');
+
   const result = await withTransaction(async (client) => {
     const params = [showId, customerId];
     let filter = '';
@@ -204,37 +219,89 @@ async function releaseHold(showId, customerId, seatIds = null) {
       filter = ` AND ss.id = ANY($3::int[])`;
     }
 
+    // `FOR UPDATE OF ss` because of the venue_seats join: a bare FOR UPDATE would
+    // also lock venue_seats rows, which are shared by every show at the venue.
     const { rows: locked } = await client.query(
-      `SELECT ss.id
+      `SELECT ss.id, ss.show_id, ss.category, vs.row_label, vs.seat_number
          FROM show_seats ss
+         JOIN venue_seats vs ON vs.id = ss.venue_seat_id
         WHERE ss.show_id = $1
           AND ss.held_by = $2
           AND ss.status = 'held'
           ${filter}
-        FOR UPDATE`,
+        ORDER BY ss.id
+        FOR UPDATE OF ss`,
       params
     );
 
-    if (locked.length === 0) return { seats: [], releasedIds: [] };
+    if (locked.length === 0) {
+      return { seats: [], releasedIds: [], offers: [], offeredCount: 0, releasedCount: 0 };
+    }
 
     const ids = locked.map((r) => r.id);
-    await client.query(
-      `UPDATE show_seats
-          SET status = 'available', held_by = NULL, hold_expires_at = NULL
-        WHERE id = ANY($1::int[])`,
-      [ids]
-    );
+
+    // One decision per seat, made while this transaction still holds the row lock,
+    // so there is never an instant where a waitlisted seat sits available.
+    const offers = [];
+    let offeredCount = 0;
+    let releasedCount = 0;
+
+    for (const seat of locked) {
+      if (!config.isTest) {
+        console.log(
+          `[waitlist] seat ${seat.row_label}${seat.seat_number} released from hold by customer ${customerId}`
+        );
+      }
+
+      const outcome = await waitlistService.placeSeat(client, seat);
+      if (outcome.outcome === 'offered') {
+        offeredCount += 1;
+        offers.push(outcome);
+      } else {
+        releasedCount += 1;
+      }
+    }
 
     const { rows: seats } = await client.query(SEAT_DETAIL_SQL, [ids]);
-    return { seats, releasedIds: ids };
+
+    // Give the offer emails their show/seat context while the client is still open.
+    let enrichedOffers = [];
+    if (offers.length > 0) {
+      const { rows: showRows } = await client.query(
+        `SELECT s.id, s.date, s.time, e.title AS event_title, v.name AS venue_name
+           FROM shows s
+           JOIN events e ON e.id = s.event_id
+           JOIN venues v ON v.id = e.venue_id
+          WHERE s.id = $1`,
+        [showId]
+      );
+      const seatById = new Map(seats.map((s) => [s.id, s]));
+      enrichedOffers = offers.map((o) => ({
+        ...o,
+        seat: seatById.get(o.seatId),
+        show: showRows[0],
+      }));
+    }
+
+    return { seats, releasedIds: ids, offers: enrichedOffers, offeredCount, releasedCount };
   });
+
+  // ---- Committed. Side effects only from here. ----
 
   if (result.releasedIds.length > 0) {
     realtime.emitSeatUpdate(showId, result.seats, { reason: 'release', actorId: customerId });
     realtime.emitAvailabilityChanged(showId, 'release');
   }
 
-  return { released: result.releasedIds.length, seat_ids: result.releasedIds };
+  // Emailed after commit so a slow provider cannot hold locks on contended seats.
+  waitlistService.scheduleOfferEmails(result.offers);
+
+  return {
+    released: result.releasedIds.length,
+    seat_ids: result.releasedIds,
+    seats_offered_to_waitlist: result.offeredCount,
+    seats_released: result.releasedCount,
+  };
 }
 
 /**

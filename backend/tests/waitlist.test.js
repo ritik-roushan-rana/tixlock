@@ -936,3 +936,179 @@ describe('waitlist allocation contract', () => {
     expect((await seatMapEntry(seatId)).status).toBe('available');
   });
 });
+
+/**
+ * Explicit hold release must respect the waitlist, exactly like cancellation.
+ *
+ * This is a regression suite for a real production bug: DELETE /api/shows/:id/hold
+ * ran its own `UPDATE show_seats SET status = 'available'` instead of routing the
+ * seat through placeSeat. A customer who held the last seat in a sold-out category
+ * and then pressed "release" put that seat straight back on general sale, so the
+ * waiting customer was never offered it, never emailed, and any passer-by could
+ * take it. Cancellation was correct, which is exactly why this went unnoticed.
+ */
+describe('explicit hold release respects the waitlist', () => {
+  const release = (customer, seatIds) =>
+    api()
+      .delete(`/api/shows/${ctx.show.id}/hold`)
+      .set(auth(customer))
+      .send(seatIds ? { seat_ids: seatIds } : {});
+
+  const seatRow = (seatId) =>
+    query(
+      `SELECT status::text AS status, held_by, hold_expires_at
+         FROM show_seats WHERE id = $1`,
+      [seatId]
+    ).then((r) => r.rows[0]);
+
+  /** Hold every Premium seat as `owner` so the category reads as sold out. */
+  async function holdOutPremium() {
+    const ids = premium().map((s) => s.id);
+    const res = await hold(owner, ids);
+    expect(res.status).toBe(201);
+    return ids;
+  }
+
+  it('offers a released held seat to the waiting customer instead of the public', async () => {
+    const ids = await holdOutPremium();
+    expect((await join(bob)).status).toBe(201);
+
+    const res = await release(owner, [ids[0]]);
+    expect(res.status).toBe(200);
+
+    // The seat must be OFFERED to Bob, never AVAILABLE.
+    const seat = await seatRow(ids[0]);
+    expect(seat.status).toBe('offered');
+    expect(seat.held_by).toBe(bob.id);
+    expect(new Date(seat.hold_expires_at).getTime()).toBeGreaterThan(Date.now());
+
+    const { rows: wl } = await query(
+      `SELECT status::text AS status, offer_token, offered_show_seat_id
+         FROM waitlist WHERE customer_id = $1`,
+      [bob.id]
+    );
+    expect(wl[0].status).toBe('offered');
+    expect(wl[0].offer_token).toMatch(/^[0-9a-f]{64}$/);
+    expect(wl[0].offered_show_seat_id).toBe(ids[0]);
+  });
+
+  it('emails the waiting customer after the release commits', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+    await release(owner, [ids[0]]);
+    await flush();
+
+    const mail = mailer.getOutbox().find((m) => m.to === bob.email);
+    expect(mail).toBeDefined();
+    expect(mail.subject).toMatch(/premium seat is available/i);
+    expect(mail.text).toContain('/offer?token=');
+  });
+
+  it('blocks a normal customer from holding the released-then-offered seat', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+    await release(owner, [ids[0]]);
+
+    const res = await hold(carol, [ids[0]]);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('SEATS_UNAVAILABLE');
+    expect(res.body.error.details.unavailableSeatIds).toContain(ids[0]);
+  });
+
+  it('blocks a normal customer from booking the released-then-offered seat', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+    await release(owner, [ids[0]]);
+
+    const res = await book(carol, [ids[0]]);
+    expect(res.status).toBe(409);
+  });
+
+  it('still returns the seat to general sale when nobody is waiting', async () => {
+    const ids = await holdOutPremium();
+
+    const res = await release(owner, [ids[0]]);
+    expect(res.status).toBe(200);
+
+    const seat = await seatRow(ids[0]);
+    expect(seat.status).toBe('available');
+    expect(seat.held_by).toBeNull();
+    expect(seat.hold_expires_at).toBeNull();
+
+    // And is genuinely claimable again.
+    expect((await hold(carol, [ids[0]])).status).toBe(201);
+  });
+
+  it('distributes a full release across the queue in FIFO order', async () => {
+    const ids = await holdOutPremium(); // 2 Premium seats
+    await join(bob);
+    await join(alice);
+
+    // Release everything at once, with no seat_ids filter.
+    const res = await release(owner);
+    expect(res.status).toBe(200);
+
+    const { rows } = await query(
+      `SELECT w.customer_id, w.status::text AS status
+         FROM waitlist w WHERE w.show_id = $1 ORDER BY w.joined_at, w.id`,
+      [ctx.show.id]
+    );
+    expect(rows).toEqual([
+      { customer_id: bob.id, status: 'offered' },
+      { customer_id: alice.id, status: 'offered' },
+    ]);
+
+    const { rows: seats } = await query(
+      `SELECT count(*)::int AS n FROM show_seats
+        WHERE show_id = $1 AND status = 'offered'`,
+      [ctx.show.id]
+    );
+    expect(seats[0].n).toBe(2);
+  });
+
+  it('reports how many released seats went to the waitlist', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+
+    const res = await release(owner);
+    expect(res.body.released).toBe(2);
+    expect(res.body.seats_offered_to_waitlist).toBe(1);
+    expect(res.body.seats_released).toBe(1);
+  });
+
+  it('never releases another customer’s hold', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+
+    // Carol tries to release the owner's hold.
+    const res = await release(carol, [ids[0]]);
+    expect(res.status).toBe(200);
+    expect(res.body.released).toBe(0);
+
+    // Seat is untouched: still held by owner, not offered to Bob.
+    const seat = await seatRow(ids[0]);
+    expect(seat.status).toBe('held');
+    expect(seat.held_by).toBe(owner.id);
+  });
+
+  it('a released seat offered to B cannot be raced away by C', async () => {
+    const ids = await holdOutPremium();
+    await join(bob);
+    await release(owner, [ids[0]]);
+
+    const { rows } = await query('SELECT offer_token FROM waitlist WHERE customer_id = $1', [bob.id]);
+
+    // B accepts while C simultaneously attempts a hold on the same seat.
+    const [accept, steal] = await Promise.all([
+      api().post(`/api/waitlist/offers/${rows[0].offer_token}/accept`).set(auth(bob)).send(),
+      hold(carol, [ids[0]]),
+    ]);
+
+    expect(accept.status).toBe(200);
+    expect(steal.status).toBe(409);
+
+    const seat = await seatRow(ids[0]);
+    expect(seat.status).toBe('held');
+    expect(seat.held_by).toBe(bob.id);
+  });
+});
