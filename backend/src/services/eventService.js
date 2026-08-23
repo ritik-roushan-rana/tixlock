@@ -63,7 +63,19 @@ async function listEvents({ type, dateFrom, dateTo, venueId, organiserId, search
   if (type) add('e.type = ?', type);
   if (venueId) add('e.venue_id = ?', venueId);
   if (organiserId) add('e.organiser_id = ?', organiserId);
-  if (search) add('e.title ILIKE ?', `%${search}%`);
+
+  // One search term across title, venue and description. It used to match the title
+  // alone, which quietly contradicted the UI: the box has always been labelled
+  // "Search events, venues…", so a venue name returned nothing.
+  //
+  // Written out rather than passed through `add()` because that helper substitutes a
+  // single placeholder per call, and this needs one bound value referenced three
+  // times. Still parameterised — the value never enters the string.
+  if (search) {
+    params.push(`%${search}%`);
+    const term = `$${params.length}`;
+    where.push(`(e.title ILIKE ${term} OR v.name ILIKE ${term} OR e.description ILIKE ${term})`);
+  }
 
   // Date filters constrain which *shows* count, and an event only appears if it
   // still has a matching show. EXISTS rather than a JOIN so an event with 20

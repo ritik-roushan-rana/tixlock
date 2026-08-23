@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarX2, Search, X } from 'lucide-react';
@@ -29,7 +29,11 @@ const TYPE_LABEL: Record<EventType, string> = {
  *
  * Filters live in the URL rather than component state so a filtered view is
  * shareable and survives a refresh or a back-navigation from an event detail page.
- * The search box is debounced, so typing does not fire a request per keystroke.
+ *
+ * That is also what let the search box move up into the header without either side
+ * knowing about the other: AppShell's field writes `q`, this page reads it. There is
+ * no shared store and no second request. The read is debounced, so a term arriving a
+ * keystroke at a time is still one call.
  *
  * The redesign changed only presentation: the same `filters` object is built from the
  * same URL params and handed to the same query key and endpoint. The type filter is a
@@ -48,8 +52,11 @@ export default function EventsPage() {
   const dateTo = params.get('date_to') ?? undefined;
   const urlQuery = params.get('q') ?? '';
 
-  const [searchInput, setSearchInput] = useState(urlQuery);
-  const debouncedSearch = useDebouncedValue(searchInput, 300);
+  // The search box lives in the header now, so `q` arrives already in the URL and
+  // there is no local mirror of it left to hold. Debouncing moved with it: the header
+  // writes the param per keystroke, and this defers the *request* so a four-letter
+  // word is one call rather than four.
+  const debouncedSearch = useDebouncedValue(urlQuery, 300);
 
   const filters: EventFilters = useMemo(
     () => ({
@@ -73,10 +80,9 @@ export default function EventsPage() {
     setParams(nextParams, { replace: true });
   };
 
-  const clearAll = () => {
-    setSearchInput('');
-    setParams(new URLSearchParams(), { replace: true });
-  };
+  // Drops `q` along with the rest, which the header field picks up: it mirrors the
+  // param, so clearing here visibly empties the box up in the bar.
+  const clearAll = () => setParams(new URLSearchParams(), { replace: true });
 
   const activeFilterCount = [type, dateFrom, dateTo, urlQuery].filter(Boolean).length;
 
@@ -98,34 +104,15 @@ export default function EventsPage() {
         <FeaturedEvent event={featured} />
       ) : null}
 
-      {/* --- Search + filters -----------------------------------------------
+      {/* --- Filters ---------------------------------------------------------
           One tonal block containing every control, per the reference. Sectioning
-          by surface shift rather than by a rule or a card. */}
-      <section className="bg-card p-2">
-        <div className="flex flex-col items-stretch gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="relative w-full md:w-96">
-            <Label htmlFor="filter-search" className="sr-only">
-              Search events
-            </Label>
-            <Search
-              aria-hidden
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            />
-            {/* Ink outline that thickens on focus, rather than a ring — the
-                brutalist focus treatment from the design spec. */}
-            <Input
-              id="filter-search"
-              type="search"
-              className="h-11 w-full border border-border-strong bg-background pl-9 pr-3 text-body-sm focus-visible:border-2 focus-visible:ring-0 focus-visible:ring-offset-0"
-              placeholder="Search events, venues…"
-              value={searchInput}
-              onChange={(e) => {
-                setSearchInput(e.target.value);
-                update('q', e.target.value || undefined);
-              }}
-            />
-          </div>
+          by surface shift rather than by a rule or a card.
 
+          Search is not among them any more — it is in the header, so it is reachable
+          from a seat map or a ticket list too. What it wrote is what this block still
+          reads, so an active term shows up here in the term chip and the clear count. */}
+      <section className="bg-card p-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Chip group. Scrolls horizontally on mobile instead of wrapping, so the
               filter row stays one line tall. */}
           <div
@@ -146,6 +133,23 @@ export default function EventsPage() {
               </TypeChip>
             ))}
           </div>
+
+          {/* The search term, echoed as a removable chip. Without it the page would
+              silently show a filtered list while the only evidence sat in the header
+              field, which is easy to miss on a narrow screen where it is behind an
+              icon. Removing it clears just `q` and leaves the other filters alone. */}
+          {urlQuery ? (
+            <button
+              type="button"
+              onClick={() => update('q', undefined)}
+              aria-label={`Clear search: ${urlQuery}`}
+              className="eyebrow inline-flex max-w-full items-center gap-1.5 border border-border-strong bg-background px-2 py-1.5 text-foreground transition-colors hover:bg-card-alt focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate normal-case tracking-normal">{urlQuery}</span>
+              <X className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            </button>
+          ) : null}
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-card-alt pt-2">

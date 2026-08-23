@@ -129,18 +129,21 @@ check(
 );
 check('  lists seeded events', await waitForText('Dune: Part Three'));
 let body = await bodyText();
-// The filter bar is a search input plus a pill group, not labelled form fields, so
-// assert the controls themselves rather than their old visible label text.
+// The filter bar is a pill group plus two dates, not labelled form fields, so assert
+// the controls themselves rather than their old visible label text. Search is no
+// longer among them — it moved to the header — so it is checked separately below, and
+// the page is asserted to have exactly one search field, in the bar.
 const filterControls = await page.evaluate(() => {
-  const search = document.querySelector('input#filter-search');
+  const navSearch = document.querySelector('header input#nav-search');
   const pills = document.querySelector('[role="group"][aria-label="Filter by type"]');
   const pillLabels = pills
     ? [...pills.querySelectorAll('button')].map((b) => b.textContent?.trim())
     : [];
   const dates = document.querySelectorAll('input#filter-from, input#filter-to').length;
   return {
-    search: Boolean(search),
-    searchType: search?.getAttribute('type') ?? null,
+    navSearch: Boolean(navSearch),
+    navSearchType: navSearch?.getAttribute('type') ?? null,
+    searchInputCount: document.querySelectorAll('input[type="search"]').length,
     pillCount: pillLabels.length,
     pillLabels,
     dates,
@@ -148,12 +151,63 @@ const filterControls = await page.evaluate(() => {
 });
 check(
   '  filter controls present',
-  filterControls.search &&
-    filterControls.searchType === 'search' &&
-    filterControls.pillCount === 3 &&
-    filterControls.dates === 2,
+  filterControls.pillCount === 3 && filterControls.dates === 2,
   JSON.stringify(filterControls)
 );
+check(
+  '  search lives in the header, and only there',
+  filterControls.navSearch &&
+    filterControls.navSearchType === 'search' &&
+    filterControls.searchInputCount === 1,
+  JSON.stringify(filterControls)
+);
+
+// Global search. Type into the header field and prove the URL and the grid follow.
+await page.type('header input#nav-search', 'dune');
+await new Promise((r) => setTimeout(r, 900)); // 300ms request debounce plus the fetch
+const searched = await page.evaluate(() => ({
+  q: new URL(location.href).searchParams.get('q'),
+  body: document.body.innerText,
+}));
+check('  header search writes ?q=', searched.q === 'dune', String(searched.q));
+check(
+  '  search filters the grid',
+  /Dune: Part Three/i.test(searched.body) && !/Coldplay/i.test(searched.body),
+  searched.body.slice(0, 200).replace(/\s+/g, ' ')
+);
+
+// The term is echoed on the page, so a filtered list is never unexplained while the
+// only evidence sits in the header. Queried by its accessible name rather than
+// asserted against body text: the chip renders the bare term, which also appears in
+// the header field, so innerText alone would not prove the chip exists.
+const termChip = await page.evaluate(
+  () => document.querySelector('[aria-label="Clear search: dune"]')?.textContent?.trim() ?? null
+);
+check('  active term shown as a chip', termChip === 'dune', String(termChip));
+
+// Venue match. No event title contains "Auditorium" — only the venue name does — so
+// results here prove the search reaches past events.title.
+await goto('/events?q=Auditorium');
+check('  search matches venue names', await waitForText('Coldplay'));
+
+// Description match. "saga" appears only in one event's description.
+await goto('/events?q=saga');
+const byDescription = await page.evaluate(() => document.body.innerText);
+check(
+  '  search matches descriptions',
+  /Dune: Part Three/i.test(byDescription) && !/Coldplay/i.test(byDescription),
+  byDescription.slice(0, 160).replace(/\s+/g, ' ')
+);
+
+// A shared ?q= link survives a cold load: the field is URL-driven, not local state.
+const restored = await page.evaluate(
+  () => document.querySelector('header input#nav-search')?.value ?? null
+);
+check('  header field rehydrates from the URL', restored === 'saga', String(restored));
+
+// Clearing restores the full list.
+await goto('/events');
+check('  cleared search restores all events', await waitForText('Coldplay'));
 
 // The hero CTA is "Get tickets" in the brutalist redesign (was "Book now").
 check('  hero spotlights an event', await waitForText('Get tickets'));
