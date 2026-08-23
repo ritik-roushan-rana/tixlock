@@ -288,7 +288,11 @@ async function sendCancellationConfirmation({ to, name, booking, show, seats }) 
  * id.
  */
 async function sendWaitlistOffer({ to, name, show, seat, offerToken, expiresAt, category }) {
-  const link = `${config.publicUrl}/offer.html?token=${encodeURIComponent(offerToken)}`;
+  // `/offer`, not `/offer.html`: the frontend is a Vite SPA whose router declares
+  // `path: 'offer'`. A `.html` suffix still returns 200 because the host rewrites
+  // every non-asset path to index.html, but React Router then matches nothing and
+  // renders the 404 page — so the offer would look expired to the recipient.
+  const link = `${config.publicUrl}/offer?token=${encodeURIComponent(offerToken)}`;
   const seatText = `${seat.row_label}${seat.seat_number}`;
   const deadline = new Date(expiresAt).toUTCString();
 

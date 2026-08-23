@@ -374,7 +374,7 @@ describe('cancellation offers to the waitlist instead of releasing', () => {
     const offerMail = mailer.getOutbox().find((m) => m.to === alice.email);
     expect(offerMail).toBeDefined();
     expect(offerMail.subject).toMatch(/Premium seat is available/i);
-    expect(offerMail.text).toContain('/offer.html?token=');
+    expect(offerMail.text).toContain('/offer?token=');
   });
 
   it('still cancels successfully when the offer email fails', async () => {
@@ -516,7 +516,7 @@ describe('offer expiry cascades down the queue', () => {
 
     const bobMail = mailer.getOutbox().find((m) => m.to === bob.email);
     expect(bobMail).toBeDefined();
-    expect(bobMail.text).toContain('/offer.html?token=');
+    expect(bobMail.text).toContain('/offer?token=');
   });
 
   it('leaves a live offer untouched', async () => {
