@@ -10,3 +10,8 @@ dist-ssr/
 *.log
 .vercel
 .env*
+# .env.example documents every variable and must stay in the repo. Without this
+# negation the broad .env* rule above silently swallows it the moment it is not
+# already tracked (e.g. after a re-add), which is how a fresh clone loses its
+# configuration reference.
+!.env.example
