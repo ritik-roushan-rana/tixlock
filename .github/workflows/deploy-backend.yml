@@ -1,0 +1,118 @@
+# Push backend -> deploy to Railway.
+#
+# Why this exists rather than Railway's native GitHub auto-deploy: the Railway
+# service has this repo recorded as its source, but no deploy trigger and no webhook
+# on the repo, so pushes to main never built anything. The service sat on one commit
+# for a whole day while five landed on main. Creating that trigger means authorising
+# Railway's GitHub App in a browser; this workflow gets the same outcome from CI, and
+# keeps working regardless of the App's state.
+#
+# Deploys are gated on the test suite. A backend that reaches production without its
+# 265 tests having passed is not worth the few minutes saved.
+name: Deploy backend to Railway
+
+on:
+  push:
+    branches: [main]
+    # Frontend-only pushes should not rebuild the API. Vercel handles those.
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  # So a deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
+# A second push while one deploy is in flight should supersede it, not race it —
+# two `railway up` runs finishing out of order would leave the older build live.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ticket_booking_test
+        ports: ['5432:5432']
+        # Without this the first migration can race the server's startup.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        working-directory: backend
+        run: npm ci
+
+      # No migrate step: tests/globalSetup.js calls reset() and rebuilds the schema
+      # once per run, and it refuses to touch a URL without "test" in it.
+      - name: Test
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ticket_booking_test
+          JWT_SECRET: ci-only-secret-not-used-anywhere-else
+          # Deliberately no mail configuration. NODE_ENV=test forces the console
+          # transport anyway, but leaving these unset means a regression in that guard
+          # cannot quietly start mailing fixture addresses from CI.
+        run: npm test
+
+  deploy:
+    name: Deploy to Railway
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Railway CLI
+        run: npm i -g @railway/cli@4
+
+      # The service's root directory is `backend`, and Railway applies that to
+      # whatever context it is given. So the upload has to be the repo root — running
+      # this from backend/ makes it look for backend/backend and the build fails.
+      - name: Link the project
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: >-
+          railway link
+          --project ${{ vars.RAILWAY_PROJECT_ID || '680b5012-2cc2-439a-b6d0-3f08942eeb96' }}
+          --environment production
+          --service tixlock-api
+
+      - name: Deploy
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        # --ci streams build logs then exits non-zero if the build fails, so a broken
+        # build fails the workflow instead of passing silently.
+        run: railway up --service tixlock-api --ci
+
+      - name: Verify the deployed service is healthy
+        # Confirms the new container is actually serving, and reports which mail
+        # transport it came up with — the field /api/health exposes for exactly this.
+        run: |
+          for i in $(seq 1 12); do
+            body=$(curl -fsS https://tixlock-api-production.up.railway.app/api/health) && {
+              echo "$body"
+              echo "$body" | grep -q '"status":"ok"' && exit 0
+            }
+            echo "attempt $i: not healthy yet"
+            sleep 10
+          done
+          echo "service did not report healthy after 2 minutes"
+          exit 1
