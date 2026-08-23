@@ -27,8 +27,8 @@ release, so the dependency is deliberately not in `package.json`.
 ## Running them
 
 ```bash
-# 1. Backend on :3000, with a seeded database
-cd ../../backend && npm run migrate:reset && npm run seed && npm start
+# 1. Backend on :3000, with the demo dataset loaded
+cd ../../backend && npm run demo:reset && npm start
 
 # 2. Build and serve the frontend on :4173
 cd ../frontend && npm run build && npx vite preview --port 4173
@@ -42,9 +42,10 @@ node scripts/e2e/image-performance.mjs
 node scripts/e2e/loading-ux.mjs
 ```
 
-`journey.mjs` expects at least one event with a 46-seat show, which
-`backend/npm run seed` plus one organiser-created show provides. `realtime.mjs`
-creates its own throwaway show, so it needs no particular fixture.
+`journey.mjs` discovers its own fixture — it asks the API for the first upcoming showing
+with free seats and asserts against that showing's real seat count — so any dataset with
+something bookable will do. `backend/npm run demo` provides one. `realtime.mjs` and
+`organiser-flow.mjs` create what they need as they go.
 
 Set `APP_URL` to point at a different origin (defaults to `http://localhost:4173`).
 Both exit non-zero on failure.
@@ -52,7 +53,8 @@ Both exit non-zero on failure.
 ## What each covers
 
 **`journey.mjs`** — 38 assertions across the whole product:
-anonymous browse, event detail, seat grid rendering (asserts exactly 46 seats),
+anonymous browse, event detail, seat grid rendering (asserts the showing's full seat
+count),
 customer sign-in and role redirect, seat selection, hold with a server-derived
 countdown, booking with QR, booking history, organiser dashboard including Recharts
 surfaces, per-event report, admin venue page and layout editor, client-side role

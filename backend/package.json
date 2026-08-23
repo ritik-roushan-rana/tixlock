@@ -14,6 +14,8 @@
     "migrate:status": "node src/migrations/run.js status",
     "migrate:reset": "node src/migrations/run.js reset",
     "seed": "node src/scripts/seed.js",
+    "demo": "node src/scripts/demo.js",
+    "demo:reset": "node src/migrations/run.js reset && node src/scripts/demo.js",
     "test": "NODE_ENV=test jest --runInBand"
   },
   "dependencies": {

@@ -111,6 +111,39 @@ async function signIn(email) {
     .catch(() => false);
 }
 
+/**
+ * Discover a bookable fixture instead of hard-coding ids.
+ *
+ * This used to navigate to `/events/1` and `/shows/1` and assert exactly 46 seats,
+ * which pinned the script to one particular seeded venue. `npm run demo` now builds a
+ * scenario whose show 1 is deliberately a *past* showing — it exists to give the
+ * organiser's revenue a history — so the old anchor pointed at a screen this script has
+ * no business booking on. Asking the API which showing is upcoming and has seats free
+ * lets the walkthrough follow the data rather than dictate it.
+ */
+const API = process.env.API_URL ?? 'http://localhost:3000';
+const fixture = await (async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const { events } = await fetch(`${API}/api/events`).then((r) => r.json());
+  for (const summary of events) {
+    const { event } = await fetch(`${API}/api/events/${summary.id}`).then((r) => r.json());
+    // Four seats free: the script books two and needs headroom to be re-runnable.
+    const show = (event.shows ?? []).find((s) => s.date >= today && s.available_seats >= 4);
+    if (show) {
+      return {
+        eventId: event.id,
+        eventTitle: event.title,
+        showId: show.id,
+        totalSeats: show.total_seats,
+      };
+    }
+  }
+  throw new Error('No upcoming showing with free seats — run `cd backend && npm run demo`');
+})();
+console.log(
+  `fixture: event ${fixture.eventId} "${fixture.eventTitle}", show ${fixture.showId} (${fixture.totalSeats} seats)\n`
+);
+
 console.log(`=== Browser verification against ${APP} ===\n`);
 
 /* --- Public -------------------------------------------------------------- */
@@ -127,7 +160,7 @@ check(
     .then(() => true)
     .catch(() => false)
 );
-check('  lists seeded events', await waitForText('Dune: Part Three'));
+check('  lists seeded events', await waitForText(fixture.eventTitle));
 let body = await bodyText();
 // The filter bar is a pill group plus two dates, not labelled form fields, so assert
 // the controls themselves rather than their old visible label text. Search is no
@@ -163,16 +196,16 @@ check(
 );
 
 // Global search. Type into the header field and prove the URL and the grid follow.
-await page.type('header input#nav-search', 'dune');
+await page.type('header input#nav-search', 'interstellar');
 await new Promise((r) => setTimeout(r, 900)); // 300ms request debounce plus the fetch
 const searched = await page.evaluate(() => ({
   q: new URL(location.href).searchParams.get('q'),
   body: document.body.innerText,
 }));
-check('  header search writes ?q=', searched.q === 'dune', String(searched.q));
+check('  header search writes ?q=', searched.q === 'interstellar', String(searched.q));
 check(
   '  search filters the grid',
-  /Dune: Part Three/i.test(searched.body) && !/Coldplay/i.test(searched.body),
+  /Interstellar/i.test(searched.body) && !/Coldplay/i.test(searched.body),
   searched.body.slice(0, 200).replace(/\s+/g, ' ')
 );
 
@@ -181,21 +214,21 @@ check(
 // asserted against body text: the chip renders the bare term, which also appears in
 // the header field, so innerText alone would not prove the chip exists.
 const termChip = await page.evaluate(
-  () => document.querySelector('[aria-label="Clear search: dune"]')?.textContent?.trim() ?? null
+  () => document.querySelector('[aria-label="Clear search: interstellar"]')?.textContent?.trim() ?? null
 );
-check('  active term shown as a chip', termChip === 'dune', String(termChip));
+check('  active term shown as a chip', termChip === 'interstellar', String(termChip));
 
-// Venue match. No event title contains "Auditorium" — only the venue name does — so
+// Venue match. No event title contains "Opera" — only the venue name does — so
 // results here prove the search reaches past events.title.
-await goto('/events?q=Auditorium');
-check('  search matches venue names', await waitForText('Coldplay'));
+await goto('/events?q=Opera');
+check('  search matches venue names', await waitForText('Sunday Jazz'));
 
-// Description match. "saga" appears only in one event's description.
-await goto('/events?q=saga');
+// Description match. "wristbands" appears only in one event's description.
+await goto('/events?q=wristbands');
 const byDescription = await page.evaluate(() => document.body.innerText);
 check(
   '  search matches descriptions',
-  /Dune: Part Three/i.test(byDescription) && !/Coldplay/i.test(byDescription),
+  /Coldplay/i.test(byDescription) && !/Interstellar/i.test(byDescription),
   byDescription.slice(0, 160).replace(/\s+/g, ' ')
 );
 
@@ -203,7 +236,7 @@ check(
 const restored = await page.evaluate(
   () => document.querySelector('header input#nav-search')?.value ?? null
 );
-check('  header field rehydrates from the URL', restored === 'saga', String(restored));
+check('  header field rehydrates from the URL', restored === 'wristbands', String(restored));
 
 // Clearing restores the full list.
 await goto('/events');
@@ -212,17 +245,17 @@ check('  cleared search restores all events', await waitForText('Coldplay'));
 // The hero CTA is "Get tickets" in the brutalist redesign (was "Book now").
 check('  hero spotlights an event', await waitForText('Get tickets'));
 
-await goto('/events/1');
+await goto(`/events/${fixture.eventId}`);
 // The showtime picker's heading is "Select showtime" since the redesign (it was
 // "Choose a showing"). Same assertion, current copy: prove the picker rendered.
 check('/events/:id renders detail', await waitForText('Select showtime'));
 body = await bodyText();
 check('  price tier shown', has(body, 'Premium') || has(body, 'Standard'));
 
-await goto('/shows/1');
+await goto(`/shows/${fixture.showId}`);
 await page.waitForSelector('[data-seat-id]', { timeout: 12000 }).catch(() => {});
 const seatCount = await page.evaluate(() => document.querySelectorAll('[data-seat-id]').length);
-check('/shows/:id renders the seat grid', seatCount === 46, `${seatCount} seats`);
+check('/shows/:id renders the seat grid', seatCount === fixture.totalSeats, `${seatCount} seats`);
 check('  socket reports Live', await waitForText('Live'));
 body = await bodyText();
 check('  anonymous sees sign-in CTA', has(body, 'Sign in to book'));
@@ -232,7 +265,7 @@ check('  legend rendered', has(body, 'Available') && has(body, 'Booked'));
 console.log('\ncustomer');
 check('login redirects customer to /events', await signIn('customer@ticketbooking.local'), page.url());
 
-await goto('/shows/1');
+await goto(`/shows/${fixture.showId}`);
 await page.waitForSelector('[data-seat-id]:not([disabled])', { timeout: 12000 });
 await page.evaluate(() => {
   [...document.querySelectorAll('[data-seat-id]:not([disabled])')].slice(0, 2).forEach((s) => s.click());
@@ -273,7 +306,7 @@ check('  events table rendered', await waitForText('Dune: Part Three'));
 const charts = await page.evaluate(() => document.querySelectorAll('svg.recharts-surface').length);
 check('  recharts rendered', charts >= 1, `${charts} surfaces`);
 
-await goto('/organiser/events/1');
+await goto(`/organiser/events/${fixture.eventId}`);
 check('per-event report renders', await waitForText('Showings'));
 body = await bodyText();
 check('  categories + attendees tabs', has(body, 'Categories') && has(body, 'Attendees'));
@@ -289,7 +322,7 @@ const editorSeats = await page.evaluate(
   () => document.querySelectorAll('button[aria-label^="Seat "]').length
 );
 check('  editor grid draws seats', editorSeats > 0, `${editorSeats} buttons`);
-check('  seeded venue listed', has(body, 'Grand Auditorium'));
+check('  seeded venue listed', has(body, 'Cineplex Andheri'));
 
 /* --- Role guard ---------------------------------------------------------- */
 console.log('\nrole guards');
@@ -302,7 +335,7 @@ check(
 /* --- Responsive ---------------------------------------------------------- */
 console.log('\nresponsive');
 await page.setViewport({ width: 390, height: 844, isMobile: true });
-await goto('/shows/1');
+await goto(`/shows/${fixture.showId}`);
 await page.waitForSelector('[data-seat-id]', { timeout: 12000 }).catch(() => {});
 const mobile = await page.evaluate(() => {
   const scroller = document.querySelector('.overflow-x-auto');

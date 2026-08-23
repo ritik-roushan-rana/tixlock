@@ -2,16 +2,28 @@
 'use strict';
 
 /**
- * Seed script.
+ * Seed script — accounts only.
  *
- * Creates the admin account (which the API deliberately refuses to create) plus
- * a small demo dataset so the UI has something to show immediately after a fresh
- * migrate. Idempotent: re-running updates rather than duplicating.
+ * Creates the admin account (which the API deliberately refuses to create, so there is
+ * no other way to obtain one) plus the demo logins the sign-in screen offers as
+ * one-click buttons. Idempotent: existing accounts are left exactly as they are,
+ * passwords included, so this is safe to re-run against a live database.
+ *
+ * It used to also invent a venue called "Grand Auditorium" with 46 seats and nothing
+ * playing in it. That has moved out: fixture *content* now lives in `npm run demo`,
+ * which builds a complete, coherent scenario and wipes before it does. Mixing the two
+ * was the mistake — the command a deployment must run in order to have an admin should
+ * not also decide what is on sale, and a lone venue hosting no events was neither a
+ * useful demo nor a necessary bootstrap.
+ *
+ *   npm run seed    accounts only, safe on a live database
+ *   npm run demo    the full demo scenario, destructive
  */
 
 const config = require('../config/env');
-const { query, withTransaction, close } = require('../config/db');
+const { query, close } = require('../config/db');
 const authService = require('../services/authService');
+const { USERS } = require('./demo/catalogue');
 
 async function upsertUser({ name, email, password, role }) {
   const existing = await query('SELECT id, role FROM users WHERE lower(email) = lower($1)', [email]);
@@ -40,67 +52,26 @@ async function main() {
       : `[seed] admin ${config.adminSeed.email} already exists (password unchanged)`
   );
 
-  await upsertUser({
-    name: 'Demo Organiser',
-    email: 'organiser@ticketbooking.local',
-    password: 'organiser123',
-    role: 'organiser',
-  });
-  await upsertUser({
-    name: 'Demo Customer',
-    email: 'customer@ticketbooking.local',
-    password: 'customer123',
-    role: 'customer',
-  });
-  await upsertUser({
-    name: 'Second Customer',
-    email: 'customer2@ticketbooking.local',
-    password: 'customer123',
-    role: 'customer',
-  });
-  console.log('[seed] demo organiser + 2 customers ready');
-
-  // Demo venue with a small layout: enough rows to look like a real seat map,
-  // small enough that a category can be sold out by hand to exercise the waitlist.
-  const venueName = 'Grand Auditorium';
-  let venue = (await query('SELECT id FROM venues WHERE name = $1', [venueName])).rows[0];
-
-  if (!venue) {
-    venue = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        'INSERT INTO venues (name, address, created_by) VALUES ($1, $2, $3) RETURNING id',
-        [venueName, '1 Marine Drive, Mumbai', admin.id]
-      );
-      const venueId = rows[0].id;
-
-      const layout = [
-        { row_label: 'A', seats: 8, category: 'Premium' },
-        { row_label: 'B', seats: 8, category: 'Premium' },
-        { row_label: 'C', seats: 10, category: 'Standard' },
-        { row_label: 'D', seats: 10, category: 'Standard' },
-        { row_label: 'E', seats: 10, category: 'Standard' },
-      ];
-      for (const row of layout) {
-        for (let n = 1; n <= row.seats; n += 1) {
-          await client.query(
-            'INSERT INTO venue_seats (venue_id, row_label, seat_number, category) VALUES ($1, $2, $3, $4)',
-            [venueId, row.row_label, n, row.category]
-          );
-        }
-      }
-      return { id: venueId };
-    });
-    console.log(`[seed] created venue "${venueName}" with 46 seats`);
-  } else {
-    console.log(`[seed] venue "${venueName}" already exists`);
+  // Shared with the demo builder so the two cannot drift into disagreeing about who
+  // exists or what their password is.
+  let created = 0;
+  for (const spec of USERS) {
+    const user = await upsertUser(spec);
+    if (user.created) created += 1;
   }
+  console.log(
+    `[seed] ${USERS.length} demo accounts ready (${created} created, ${USERS.length - created} already present)`
+  );
 
   console.log('');
   console.log('[seed] done. Sign in with:');
-  console.log(`  admin      ${config.adminSeed.email} / ${config.adminSeed.password}`);
-  console.log('  organiser  organiser@ticketbooking.local / organiser123');
-  console.log('  customer   customer@ticketbooking.local / customer123');
-  console.log('  customer2  customer2@ticketbooking.local / customer123');
+  console.log(`  admin       ${config.adminSeed.email} / ${config.adminSeed.password}`);
+  for (const spec of USERS) {
+    console.log(`  ${spec.role.padEnd(10)}  ${spec.email} / ${spec.password}`);
+  }
+  console.log('');
+  console.log('[seed] no venues or events were created. Run "npm run demo" for the full');
+  console.log('       demo scenario (destructive — it wipes application data first).');
 }
 
 if (require.main === module) {

@@ -85,14 +85,29 @@ console.log('=== Realtime + waitlist verification ===\n');
 
 /* --- Fresh show ---------------------------------------------------------- */
 const organiser = await login('organiser@ticketbooking.local', 'organiser123');
+/**
+ * Price whatever categories the venue actually has.
+ *
+ * This used to post a fixed `{ Premium, Standard }` map at `venue_id: 1`, which
+ * silently coupled the probe to one seeded layout. The API requires the map to cover a
+ * venue's categories exactly — it rejects both gaps and inventions — so the moment the
+ * demo dataset gave venue 1 a Recliner tier, show creation 400'd and the script died a
+ * few lines later on an undefined `show`. Reading the categories first makes the probe
+ * work at any venue.
+ */
+const venues = await api('GET', '/venues', { token: organiser });
+const venueId = venues.body.venues.find((v) => v.seat_count > 0).id;
+const layout = await api('GET', `/venues/${venueId}`, { token: organiser });
+const pricing = Object.fromEntries(layout.body.venue.categories.map((c, i) => [c, 400 + i * 250]));
+
 const created = await api('POST', '/events', {
   token: organiser,
-  body: { title: `Realtime Probe ${Date.now()}`, type: 'concert', venue_id: 1 },
+  body: { title: `Realtime Probe ${Date.now()}`, type: 'concert', venue_id: venueId },
 });
 const eventId = created.body.event.id;
 const showRes = await api('POST', `/events/${eventId}/shows`, {
   token: organiser,
-  body: { date: '2027-03-03', time: '20:00', pricing: { Premium: 900, Standard: 400 } },
+  body: { date: '2027-03-03', time: '20:00', pricing },
 });
 const showId = showRes.body.show.id;
 console.log(`  probe show id ${showId} (${showRes.body.show.seats_created} seats)\n`);

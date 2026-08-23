@@ -16,6 +16,11 @@ is emailed a QR-code ticket.
 
 The sign-in screen has one-click buttons for these. Created by `npm run seed`.
 
+**Evaluating this project? Start with [DEMO.md](DEMO.md).** `npm run demo` loads a
+complete scenario — 3 venues, 7 listings, 12 showings, 29 bookings, a sold-out tier with
+a queue behind it, a live checkout hold and an open time-limited waitlist offer — so
+every mechanism below can be seen without hand-building test data.
+
 ---
 
 ## Stack
@@ -49,7 +54,7 @@ cd backend
 cp .env.example .env                # then set DATABASE_URL and JWT_SECRET
 npm install
 npm run migrate                     # apply schema
-npm run seed                        # demo users + venue with 46 seats
+npm run demo                        # full demo dataset (see DEMO.md)
 npm start                           # http://localhost:3000
 
 # 3. Frontend (second terminal)
@@ -70,7 +75,9 @@ credentials set, messages are logged to the console instead of sent.
 | backend | `npm run migrate` | Apply migrations |
 | backend | `npm run migrate:status` | Show applied migrations |
 | backend | `npm run migrate:reset` | Drop and rebuild (refuses non-`test` URLs) |
-| backend | `npm run seed` | Demo users, venue, seat layout |
+| backend | `npm run seed` | Accounts only — safe to re-run on a live database |
+| backend | `npm run demo` | Full demo scenario. **Destructive**: wipes application data first |
+| backend | `npm run demo:reset` | Rebuild the schema, then the demo scenario |
 | backend | `npm test` | Jest suite against real PostgreSQL |
 | frontend | `npm run dev` | Vite dev server |
 | frontend | `npm run build` | Typecheck + production build |
