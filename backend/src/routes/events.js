@@ -41,8 +41,14 @@ router.get(
   requireAuth,
   requireRole('organiser', 'admin'),
   asyncHandler(async (req, res) => {
+    // `requireShow: false` — an organiser has to see an event they just created,
+    // before it has any showings, because this list is what the "add a showing" picker
+    // reads. The public GET /events keeps the filter: an event with no showing is not
+    // bookable and has no business in a browse list.
     const events = await eventService.listEvents(
-      req.user.role === 'admin' ? {} : { organiserId: req.user.id }
+      req.user.role === 'admin'
+        ? { requireShow: false }
+        : { organiserId: req.user.id, requireShow: false }
     );
     res.json({ events });
   })

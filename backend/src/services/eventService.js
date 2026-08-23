@@ -52,7 +52,26 @@ async function createEvent({ title, type, description, venueId, organiserId }) {
  * bound parameters ($1, $2, ...) — never interpolated into the string — so this
  * stays injection-proof despite the clause list being built at runtime.
  */
-async function listEvents({ type, dateFrom, dateTo, venueId, organiserId, search, upcomingOnly } = {}) {
+async function listEvents({
+  type,
+  dateFrom,
+  dateTo,
+  venueId,
+  organiserId,
+  search,
+  upcomingOnly,
+  /**
+   * Require at least one show for the event to be listed. True for the public browse,
+   * because an event with no showing cannot be booked and would be a dead link.
+   *
+   * The organiser's own list must pass false. It shared this default, which made a
+   * freshly created event invisible to its own creator: it appeared on the dashboard
+   * (fed by a different query) but was missing from the "New showing" event picker,
+   * which reads this list — so there was no way to give it the very showing it needed
+   * to become visible. Created, listed, and impossible to finish.
+   */
+  requireShow = true,
+} = {}) {
   const where = [];
   const params = [];
   const add = (clause, value) => {
@@ -91,7 +110,13 @@ async function listEvents({ type, dateFrom, dateTo, venueId, organiserId, search
   }
   if (upcomingOnly) showConds.push('(s.date + s.time) >= now()');
 
-  where.push(`EXISTS (SELECT 1 FROM shows s WHERE ${showConds.join(' AND ')})`);
+  // A date filter is a statement about showings, so it still implies the event must
+  // have one that matches — even for the organiser's own list, where asking for
+  // "events in September" cannot sensibly return an event with no dates at all.
+  const hasDateFilter = Boolean(dateFrom || dateTo || upcomingOnly);
+  if (requireShow || hasDateFilter) {
+    where.push(`EXISTS (SELECT 1 FROM shows s WHERE ${showConds.join(' AND ')})`);
+  }
 
   const sql = `
     SELECT e.*,

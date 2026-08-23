@@ -340,6 +340,55 @@ describe('GET /api/events — browse and filter', () => {
     const theirs = await api().get('/api/events/mine').set(auth(organiser));
     expect(theirs.body.events).toHaveLength(2);
   });
+
+  /**
+   * Regression: a brand-new event was invisible to the organiser who had just made it.
+   *
+   * /mine shared the public list's "must have at least one show" filter, so a freshly
+   * created event was missing from the picker used to add its first showing — while
+   * still appearing on the dashboard, which reads a different query. Created, listed
+   * on one screen, and impossible to finish on the other.
+   */
+  it('lists an organiser own event that has no showings yet', async () => {
+    const created = (await newEvent(organiser, { title: 'Draft With No Shows' })).body.event;
+
+    const mine = await api().get('/api/events/mine').set(auth(organiser));
+    expect(mine.status).toBe(200);
+    expect(mine.body.events.map((e) => e.id)).toContain(created.id);
+    // Reported honestly as having nothing scheduled, rather than hidden.
+    const row = mine.body.events.find((e) => e.id === created.id);
+    expect(row.show_count).toBe(0);
+    expect(row.next_show_date).toBeNull();
+  });
+
+  it('still hides a showless event from the public browse list', async () => {
+    const created = (await newEvent(organiser, { title: 'Draft Not Public' })).body.event;
+
+    const publicList = await api().get('/api/events');
+    expect(publicList.status).toBe(200);
+    expect(publicList.body.events.map((e) => e.id)).not.toContain(created.id);
+
+    // Nor via search: an unbookable event must not surface anywhere customer-facing.
+    const searched = await api().get('/api/events?q=Draft+Not+Public');
+    expect(searched.body.events).toHaveLength(0);
+  });
+
+  /**
+   * A date filter is a question about showings, so it must still exclude an event that
+   * has none — even with `requireShow: false`. Asserted against the service directly:
+   * GET /events/mine intentionally takes no query parameters, so the route cannot
+   * exercise this combination.
+   */
+  it('excludes a showless event when a date filter is supplied, even without requireShow', async () => {
+    const eventService = require('../src/services/eventService');
+    await newEvent(organiser, { title: 'Showless For Date Filter' });
+
+    const unfiltered = await eventService.listEvents({ requireShow: false });
+    expect(unfiltered.map((e) => e.title)).toContain('Showless For Date Filter');
+
+    const dated = await eventService.listEvents({ requireShow: false, dateFrom: '2099-01-01' });
+    expect(dated.map((e) => e.title)).not.toContain('Showless For Date Filter');
+  });
 });
 
 describe('GET /api/events/:id', () => {
