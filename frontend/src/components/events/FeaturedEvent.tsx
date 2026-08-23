@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, CalendarDays, MapPin, Sparkle } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -6,6 +7,8 @@ import { formatMoney, toMoneyOrNull } from '@/lib/money';
 import { formatDateShort } from '@/lib/datetime';
 import { eventBackdrop, eventBackdropSrcSet, preloadEventHero } from '@/lib/posters';
 import { prefetchEventDetailRoute } from '@/routes/prefetch';
+import { eventsApi } from '@/lib/api/endpoints';
+import { queryKeys } from '@/lib/queryKeys';
 import { eventTheme } from '@/lib/eventTheme';
 import type { EventListItem } from '@/lib/api/types';
 import { Poster } from '@/components/common/Poster';
@@ -39,10 +42,17 @@ export function FeaturedEvent({ event }: { event: EventListItem }) {
   const theme = eventTheme(event.type);
   const fromPrice = toMoneyOrNull(event.from_price);
 
-  /** Chunk + hero, same as the grid cards. See EventCard for why the chunk matters. */
+  const queryClient = useQueryClient();
+
+  /** Chunk, data and hero — same as the grid cards. See EventCard for the reasoning. */
   const warmDetail = () => {
     prefetchEventDetailRoute();
     preloadEventHero(event.id);
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.events.detail(event.id),
+      queryFn: () => eventsApi.get(event.id),
+      staleTime: 30_000,
+    });
   };
 
   return (

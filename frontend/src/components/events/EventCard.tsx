@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Clapperboard, Music4 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -6,6 +7,8 @@ import { formatMoney, toMoneyOrNull } from '@/lib/money';
 import { formatDateShort } from '@/lib/datetime';
 import { eventPoster, eventPosterSrcSet, preloadEventHero } from '@/lib/posters';
 import { prefetchEventDetailRoute } from '@/routes/prefetch';
+import { eventsApi } from '@/lib/api/endpoints';
+import { queryKeys } from '@/lib/queryKeys';
 import { eventTheme } from '@/lib/eventTheme';
 import type { EventListItem } from '@/lib/api/types';
 import { Poster } from '@/components/common/Poster';
@@ -31,16 +34,29 @@ export function EventCard({ event }: { event: EventListItem }) {
   const fromPrice = toMoneyOrNull(event.from_price);
   const TypeGlyph = event.type === 'concert' ? Music4 : Clapperboard;
 
+  const queryClient = useQueryClient();
+
   /**
-   * Warm both halves of the next screen: its code chunk and its hero image.
+   * Warm all three parts of the next screen: its code chunk, its data, and its hero.
    *
-   * The chunk matters as much as the image. Without it the click mounts a Suspense
-   * fallback that is far shorter than the real page, so the layout collapses and
-   * springs back — the largest single layout shift on this route.
+   * The data prefetch is the one that removes the felt delay. The API is ~450ms away,
+   * and that request could not even begin until the click had mounted the page — so
+   * the showtimes panel sat on a skeleton for roughly half a second no matter how fast
+   * the shell appeared. Starting it on hover means the response is usually already in
+   * the cache by the time the route changes.
+   *
+   * `prefetchQuery` is safe to fire repeatedly: it keys on the same query as the page,
+   * dedupes an in-flight request, and honours `staleTime`, so re-entering a card does
+   * not re-request. Only the hovered event is fetched — never the whole grid.
    */
   const warmDetail = () => {
     prefetchEventDetailRoute();
     preloadEventHero(event.id);
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.events.detail(event.id),
+      queryFn: () => eventsApi.get(event.id),
+      staleTime: 30_000,
+    });
   };
 
   return (
