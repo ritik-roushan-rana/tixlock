@@ -1,0 +1,84 @@
+# Backend test gate for Railway's auto-deploy.
+#
+# Railway deploys the backend itself, from a GitHub deployment trigger on `main`
+# (service tixlock-api, root directory `backend`). That trigger is set with
+# `checkSuites: true`, so Railway waits for this workflow to go green before it builds.
+# The pipeline is therefore:
+#
+#   push -> these tests -> check suite green -> Railway builds and deploys
+#         -> Railway's own healthcheck on /api/health gates the traffic switch
+#
+# This workflow deliberately does NOT deploy. It used to, via `railway up` with a token
+# in a repository secret, and that was the wrong shape: the only credential obtainable
+# without browser auth was the CLI's session token, which Railway rejects from CI. Two
+# separate runs failed on `Unauthorized` for that reason. Letting Railway's native
+# integration do the deploying removes the credential from CI altogether — there is now
+# no Railway token to store, rotate, or leak.
+#
+# If deploys ever stop firing, check the trigger still exists rather than looking here:
+#   railway status --json     # or the service's Settings -> Source in the dashboard
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+    # Frontend-only pushes do not need the backend suite. Vercel handles those.
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  # Kept so the gate can be re-run by hand without an empty commit.
+  workflow_dispatch:
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ticket_booking_test
+        ports: ['5432:5432']
+        # Without this the schema reset can race the server's startup.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # The application targets Node 20; only the action runtimes moved to 24.
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        working-directory: backend
+        run: npm ci
+
+      # No migrate step: tests/globalSetup.js calls reset() and rebuilds the schema once
+      # per run, and it refuses to touch a URL without "test" in it.
+      - name: Test
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ticket_booking_test
+          JWT_SECRET: ci-only-secret-not-used-anywhere-else
+          # Deliberately no mail configuration. NODE_ENV=test forces the console
+          # transport anyway, but leaving these unset means a regression in that guard
+          # cannot quietly start mailing fixture addresses from CI.
+        run: npm test
