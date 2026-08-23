@@ -1,11 +1,11 @@
 # Push backend -> deploy to Railway.
 #
-# Why this exists rather than Railway's native GitHub auto-deploy: the Railway
-# service has this repo recorded as its source, but no deploy trigger and no webhook
-# on the repo, so pushes to main never built anything. The service sat on one commit
-# for a whole day while five landed on main. Creating that trigger means authorising
-# Railway's GitHub App in a browser; this workflow gets the same outcome from CI, and
-# keeps working regardless of the App's state.
+# Why this exists rather than Railway's native GitHub auto-deploy: the Railway service
+# has this repo recorded as its source, but no deploy trigger and no webhook on the repo,
+# so pushes to main never built anything. The service sat on one commit for a whole day
+# while five landed on main. Creating that trigger means authorising Railway's GitHub App
+# in a browser; this workflow gets the same outcome from CI, and keeps working regardless
+# of the App's state.
 #
 # Deploys are gated on the test suite. A backend that reaches production without its
 # 265 tests having passed is not worth the few minutes saved.
@@ -21,11 +21,22 @@ on:
   # So a deploy can be re-run without an empty commit.
   workflow_dispatch:
 
-# A second push while one deploy is in flight should supersede it, not race it —
-# two `railway up` runs finishing out of order would leave the older build live.
+# A second push while one deploy is in flight should supersede it, not race it — two
+# `railway up` runs finishing out of order would leave the older build live.
 concurrency:
   group: deploy-backend
   cancel-in-progress: false
+
+env:
+  # Single source of truth for the deploy target, so the link and deploy steps cannot
+  # drift apart. Verified against `railway status`: project tixlock-backend,
+  # environment production, service tixlock-api with root directory `backend`.
+  RAILWAY_PROJECT_ID: 680b5012-2cc2-439a-b6d0-3f08942eeb96
+  RAILWAY_ENVIRONMENT: production
+  RAILWAY_SERVICE: tixlock-api
+  # Pinned to the major verified locally (5.43.1). The previous pin was `@4`, which
+  # still resolves and whose flags are correct, but it trails the current release.
+  RAILWAY_CLI_VERSION: '5'
 
 jobs:
   test:
@@ -47,10 +58,11 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
+          # The application targets Node 20; only the action runtimes moved to 24.
           node-version: '20'
           cache: npm
           cache-dependency-path: backend/package-lock.json
@@ -77,30 +89,59 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
+    env:
+      # Both are passed through; the CLI uses whichever is set. A project token
+      # (RAILWAY_TOKEN) already implies project + environment, so it needs no linking.
+      # An account token (RAILWAY_API_TOKEN) can reach every project and must be told
+      # which one. Neither is ever echoed.
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install the Railway CLI
-        run: npm i -g @railway/cli@4
+        run: |
+          npm i -g @railway/cli@${RAILWAY_CLI_VERSION}
+          railway --version
 
-      # The service's root directory is `backend`, and Railway applies that to
-      # whatever context it is given. So the upload has to be the repo root — running
-      # this from backend/ makes it look for backend/backend and the build fails.
-      - name: Link the project
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: >-
-          railway link
-          --project ${{ vars.RAILWAY_PROJECT_ID || '680b5012-2cc2-439a-b6d0-3f08942eeb96' }}
-          --environment production
-          --service tixlock-api
+      # This is the step that failed before, with a bare "exit code 1" whose only clue
+      # was one line of CLI output. The token in use was a rotating CLI *session* token,
+      # which the local CLI silently refreshed, leaving the stored secret dead. Checking
+      # auth up front turns that class of failure into a message that says what to do.
+      - name: Check Railway authentication
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ] && [ -z "$RAILWAY_API_TOKEN" ]; then
+            echo "::error::No Railway token. Add a repository secret named RAILWAY_TOKEN"\
+                 "(project token: Railway -> project -> Settings -> Tokens) or"\
+                 "RAILWAY_API_TOKEN (account token: Railway -> Account Settings -> Tokens)."
+            exit 1
+          fi
+          if ! railway whoami; then
+            echo "::error::Railway rejected the token. It is missing, expired, revoked, or"\
+                 "lacks access to project ${RAILWAY_PROJECT_ID}. Mint a fresh token in the"\
+                 "Railway dashboard and update the repository secret. Note that a CLI"\
+                 "session token from ~/.railway/config.json rotates and will not survive."
+            exit 1
+          fi
 
+      # No `railway link` step. That was the step that failed, and it turns out to be
+      # unnecessary: `up` takes --project/--environment/--service directly, so the target
+      # is stated in the one command that needs it. Linking wrote CLI state to $HOME
+      # purely so a later command could read it back — an extra failure point, and one
+      # that cannot work with a project token because that credential cannot enumerate
+      # projects.
+      #
+      # Run from the repository root, not backend/: the service's root directory is
+      # `backend` and Railway applies that to whatever upload context it is given, so
+      # deploying from backend/ makes it look for backend/backend and the build fails.
       - name: Deploy
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        # --ci streams build logs then exits non-zero if the build fails, so a broken
-        # build fails the workflow instead of passing silently.
-        run: railway up --service tixlock-api --ci
+        run: |
+          railway up \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT" \
+            --service "$RAILWAY_SERVICE" \
+            --ci
 
       - name: Verify the deployed service is healthy
         # Confirms the new container is actually serving, and reports which mail
@@ -114,5 +155,5 @@ jobs:
             echo "attempt $i: not healthy yet"
             sleep 10
           done
-          echo "service did not report healthy after 2 minutes"
+          echo "::error::service did not report healthy after 2 minutes"
           exit 1
