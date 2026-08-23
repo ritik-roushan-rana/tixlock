@@ -208,13 +208,24 @@ const wrap = (title, bodyHtml) => `
 /**
  * Booking confirmation with the QR code.
  *
- * The QR is attached with a Content-ID and referenced as <img src="cid:...">
- * rather than embedded as a base64 data URI, because most mail clients — Gmail
- * and Outlook included — strip data-URI images.
+ * The QR appears twice, deliberately, and neither copy uses `cid:`:
+ *
+ *  - inline in the HTML, as an absolute https:// URL served by
+ *    GET /api/bookings/qr/:ref.png
+ *  - as a downloadable .png attachment, so the ticket survives offline
+ *
+ * `cid:` was tried first and does not work on this stack. Brevo does not support
+ * CID/embedded images on transactional email through either its HTTPS API or its
+ * SMTP relay, and the HTTPS API's attachment schema has no Content-ID field at
+ * all, so the reference arrives at Gmail with no matching MIME part and renders as
+ * a broken image. A `data:` URI is not a workaround either — Gmail strips those.
+ * An absolute URL is the only form Gmail renders; it fetches it via its image
+ * proxy, which is also why that endpoint cannot require authentication.
  */
 async function sendBookingConfirmation({ to, name, booking, show, seats, qrBuffer }) {
   const seatsText = seatList(seats);
   const when = `${show.date} at ${show.time}`;
+  const qrImageUrl = `${config.apiPublicUrl}/api/bookings/qr/${encodeURIComponent(booking.booking_ref)}.png`;
 
   const text = [
     `Hi ${name},`,
@@ -228,7 +239,9 @@ async function sendBookingConfirmation({ to, name, booking, show, seats, qrBuffe
     `Seats:     ${seatsText}`,
     `Total:     ${booking.total_amount}`,
     '',
-    'Show the QR code attached to this email at the venue entrance.',
+    'Show the QR code at the venue entrance. It is attached to this email, and',
+    'also viewable here:',
+    qrImageUrl,
   ].join('\n');
 
   const html = wrap('Your booking is confirmed', `
@@ -241,7 +254,13 @@ async function sendBookingConfirmation({ to, name, booking, show, seats, qrBuffe
       <tr><td style="padding:6px 0;color:#666">Seats</td><td style="padding:6px 0">${escapeHtml(seatsText)}</td></tr>
       <tr><td style="padding:6px 0;color:#666">Total</td><td style="padding:6px 0"><strong>${escapeHtml(booking.total_amount)}</strong></td></tr>
     </table>
-    ${qrBuffer ? '<p style="margin:20px 0 6px">Show this at the entrance:</p><img src="cid:booking-qr" width="200" height="200" alt="Booking QR code" style="border:1px solid #ddd" />' : ''}
+    <p style="margin:20px 0 6px">Show this at the entrance:</p>
+    <img src="${escapeHtml(qrImageUrl)}" width="200" height="200" alt="Booking QR code for ${escapeHtml(booking.booking_ref)}" style="border:1px solid #ddd;display:block" />
+    <p style="color:#666;font-size:12px;margin:6px 0 0">
+      Not showing? The same QR code is attached to this email as
+      ${escapeHtml(booking.booking_ref)}.png, and your ticket is always available in
+      your booking history.
+    </p>
   `);
 
   return send({

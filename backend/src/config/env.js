@@ -140,8 +140,26 @@ const config = Object.freeze({
     },
   }),
 
-  // Used to build the absolute waitlist-offer link that goes into emails.
+  // Used to build the absolute waitlist-offer link that goes into emails. This is
+  // the *frontend* origin, because that is what a recipient clicks.
   publicUrl: (process.env.PUBLIC_URL || `http://localhost:${int('PORT', 3000)}`).replace(/\/$/, ''),
+
+  /**
+   * This API's own public origin — distinct from publicUrl above, which points at
+   * the frontend.
+   *
+   * Needed because email clients cannot render `cid:` embedded images here (Brevo
+   * does not support CID on transactional mail, and the HTTPS API has no field for
+   * it), so the QR in the confirmation email is referenced as an absolute
+   * `https://` image URL served by this service. Railway injects
+   * RAILWAY_PUBLIC_DOMAIN, so this normally needs no configuration.
+   */
+  apiPublicUrl: (
+    process.env.API_PUBLIC_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN
+      ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : `http://localhost:${int('PORT', 3000)}`)
+  ).replace(/\/$/, ''),
 
   adminSeed: Object.freeze({
     email: process.env.ADMIN_EMAIL || 'admin@ticketbooking.local',
