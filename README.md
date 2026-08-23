@@ -25,6 +25,18 @@ hand-building test data.
 
 ---
 
+## Demo Screenshots
+
+### Event Discovery
+
+![Event Discovery](frontend/image/img.png)
+
+### Interactive Seat Selection
+
+![Interactive Seat Selection](frontend/image/seatmap.png)
+
+---
+
 ## Stack
 
 **Backend** — Node 20 + Express, PostgreSQL via `pg` (pooled), Socket.io, JWT +
