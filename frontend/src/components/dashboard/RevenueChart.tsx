@@ -1,255 +1,87 @@
-import { useMemo } from 'react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { lazy, Suspense } from 'react';
 
-import { formatMoney, formatMoneyCompact, toMoney } from '@/lib/money';
 import type { DashboardEventRow, EventReportShow } from '@/lib/api/types';
-import { formatDateShort, formatTime } from '@/lib/datetime';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 
 /**
- * Charts for the organiser dashboard.
+ * Lazy façade over the Recharts dashboard charts.
  *
- * Every value passed to recharts goes through `toMoney()` first: the API sends
- * money as NUMERIC strings, and recharts silently renders a string axis value as a
- * category rather than a number, which produces a chart that looks plausible but is
- * ordered alphabetically. Coercing at the boundary avoids that.
+ * Recharts is 376 kB, and it used to be a *static* import shared by both organiser
+ * routes. Rollup therefore hoisted it into a shared chunk that had to finish
+ * downloading before Suspense could resolve either route — so `/organiser` paid
+ * ~412 kB before it painted anything but a spinner. That was the longest measurable
+ * blank on the whole site, and it hit precisely the page users complained about.
+ *
+ * Splitting it here inverts the order: the dashboard's own chunk is 36 kB, so the
+ * layout, stat cards and tables paint immediately, and the chart library streams in
+ * behind them under its own Suspense boundary. Nothing about the charts themselves
+ * changed — the implementations moved to ./charts.tsx untouched and the exported
+ * names and props are identical, so no page needed editing.
+ *
+ * All three wrappers point at the same module, so it is fetched once and the second
+ * and third charts resolve from cache.
  */
 
-const TOOLTIP_STYLE = {
-  backgroundColor: 'hsl(var(--popover))',
-  border: '1px solid hsl(var(--border))',
-  borderRadius: 'var(--radius)',
-  fontSize: 12,
-  color: 'hsl(var(--popover-foreground))',
-} as const;
+const ChartsModule = {
+  RevenueByEvent: lazy(() =>
+    import('./charts').then((m) => ({ default: m.RevenueByEventChart }))
+  ),
+  OccupancyByEvent: lazy(() =>
+    import('./charts').then((m) => ({ default: m.OccupancyByEventChart }))
+  ),
+  ShowRevenue: lazy(() => import('./charts').then((m) => ({ default: m.ShowRevenueChart }))),
+};
 
-/** Revenue per event, highest first. */
+/**
+ * Placeholder occupying the chart's exact footprint.
+ *
+ * `h-64` matches the `ResponsiveContainer` box inside `CardContent`, and the header
+ * rows match the real title and description, so the chart swapping in shifts nothing
+ * around it.
+ */
+function ChartSkeleton() {
+  return (
+    <Card className="border-0 bg-card">
+      <CardHeader className="pb-2">
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="mt-2 h-4 w-56" />
+      </CardHeader>
+      <CardContent>
+        <div className="h-64 w-full" role="status" aria-live="polite">
+          <span className="sr-only">Loading chart</span>
+          {/* Bars of differing heights read as a chart arriving rather than a blank box. */}
+          <div className="flex h-full items-end gap-2">
+            {[45, 70, 35, 85, 55, 60, 40].map((h, i) => (
+              <Skeleton key={i} className="flex-1" style={{ height: `${h}%` }} />
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RevenueByEventChart({ events }: { events: DashboardEventRow[] }) {
-  const data = useMemo(
-    () =>
-      events
-        .map((event) => ({
-          name: event.title.length > 22 ? `${event.title.slice(0, 22)}…` : event.title,
-          fullName: event.title,
-          revenue: toMoney(event.revenue),
-          sold: event.booked_seats,
-        }))
-        .filter((row) => row.revenue > 0 || row.sold > 0)
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 8),
-    [events]
-  );
-
-  if (data.length === 0) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="eyebrow text-muted-foreground">Revenue by event</CardTitle>
-          <CardDescription>Confirmed bookings only.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="py-12 text-center text-sm text-muted-foreground">
-            No sales yet. Revenue appears here once a booking is confirmed.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="eyebrow text-muted-foreground">Revenue by event</CardTitle>
-        <CardDescription>Confirmed bookings only — cancellations excluded.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                interval={0}
-                angle={data.length > 4 ? -20 : 0}
-                textAnchor={data.length > 4 ? 'end' : 'middle'}
-                height={data.length > 4 ? 56 : 30}
-              />
-              <YAxis
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                tickFormatter={(value: number) => formatMoneyCompact(value)}
-                width={56}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_STYLE}
-                formatter={(value: number) => [formatMoney(value), 'Revenue']}
-                labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullName ?? ''}
-                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
-              />
-              <Bar dataKey="revenue" fill="hsl(var(--primary))" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <Suspense fallback={<ChartSkeleton />}>
+      <ChartsModule.RevenueByEvent events={events} />
+    </Suspense>
   );
 }
 
-/** Seats sold vs remaining per event — an occupancy read rather than a money read. */
 export function OccupancyByEventChart({ events }: { events: DashboardEventRow[] }) {
-  const data = useMemo(
-    () =>
-      events
-        .map((event) => ({
-          name: event.title.length > 22 ? `${event.title.slice(0, 22)}…` : event.title,
-          fullName: event.title,
-          Sold: event.booked_seats,
-          Held: event.pending_seats,
-          Available: event.available_seats,
-        }))
-        .slice(0, 8),
-    [events]
-  );
-
-  if (data.length === 0) return null;
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="eyebrow text-muted-foreground">Seat occupancy</CardTitle>
-        <CardDescription>Across every showing of each event.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                interval={0}
-                angle={data.length > 4 ? -20 : 0}
-                textAnchor={data.length > 4 ? 'end' : 'middle'}
-                height={data.length > 4 ? 56 : 30}
-              />
-              <YAxis
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                width={40}
-                allowDecimals={false}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_STYLE}
-                labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullName ?? ''}
-                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
-              />
-              {/*
-                Recharts colours each legend label with its series' fill. "Available"
-                is a tonal step (--card-alt, a near-cream #e3e3de), which is right for
-                the bar but rendered the *label* at 1.11:1 on the card — effectively
-                invisible. The formatter puts the text back to ink; the swatch beside
-                it still shows the true fill, so the mapping is unambiguous.
-              */}
-              <Legend
-                wrapperStyle={{ fontSize: 12 }}
-                formatter={(value) => (
-                  <span style={{ color: 'hsl(var(--foreground))' }}>{value}</span>
-                )}
-              />
-              <Bar dataKey="Sold" stackId="seats" fill="hsl(var(--primary))" />
-              <Bar dataKey="Held" stackId="seats" fill="hsl(var(--cobalt))" />
-              {/* A 1px ink stroke, because this fill is nearly the card colour and
-                  without an edge the "available" segment has no visible boundary. */}
-              <Bar
-                dataKey="Available"
-                stackId="seats"
-                fill="hsl(var(--card-alt))"
-                stroke="hsl(var(--border))"
-                strokeWidth={1}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <Suspense fallback={<ChartSkeleton />}>
+      <ChartsModule.OccupancyByEvent events={events} />
+    </Suspense>
   );
 }
 
-/** Per-showing revenue for a single event, in schedule order. */
 export function ShowRevenueChart({ shows }: { shows: EventReportShow[] }) {
-  const data = useMemo(
-    () =>
-      shows.map((show) => ({
-        name: `${formatDateShort(show.date)} ${formatTime(show.time)}`,
-        revenue: toMoney(show.revenue),
-        occupancy: toMoney(show.occupancy_pct),
-      })),
-    [shows]
-  );
-
-  if (data.length === 0) return null;
-
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="eyebrow text-muted-foreground">Revenue per showing</CardTitle>
-        <CardDescription>Bar shading reflects how full each showing is.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="h-56 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                interval={0}
-                angle={data.length > 3 ? -20 : 0}
-                textAnchor={data.length > 3 ? 'end' : 'middle'}
-                height={data.length > 3 ? 52 : 30}
-              />
-              <YAxis
-                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                stroke="hsl(var(--border))"
-                tickFormatter={(value: number) => formatMoneyCompact(value)}
-                width={56}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_STYLE}
-                formatter={(value: number, key) =>
-                  key === 'revenue' ? [formatMoney(value), 'Revenue'] : [`${value}%`, 'Occupancy']
-                }
-                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
-              />
-              <Bar dataKey="revenue">
-                {data.map((row, index) => (
-                  <Cell
-                    key={index}
-                    fill="hsl(var(--primary))"
-                    // Fuller showings read as more solid, so the bar encodes two
-                    // dimensions without needing a second axis.
-                    fillOpacity={0.45 + Math.min(0.55, (row.occupancy / 100) * 0.55)}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <Suspense fallback={<ChartSkeleton />}>
+      <ChartsModule.ShowRevenue shows={shows} />
+    </Suspense>
   );
 }

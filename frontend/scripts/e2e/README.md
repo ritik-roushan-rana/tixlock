@@ -38,6 +38,8 @@ npm i -D puppeteer-core
 node scripts/e2e/journey.mjs
 node scripts/e2e/realtime.mjs
 node scripts/e2e/design-system.mjs
+node scripts/e2e/image-performance.mjs
+node scripts/e2e/loading-ux.mjs
 ```
 
 `journey.mjs` expects at least one event with a 46-seat show, which
@@ -67,6 +69,18 @@ no console errors or failed requests occurred.
 2. **The waitlist offer link.** Sells out a category, queues a second customer,
    cancels a booking to trigger a real offer, opens the emailed `/offer?token=…` link
    in the browser, claims it, books it, and confirms the token is rejected on replay.
+
+**`loading-ux.mjs`** — 25 assertions that navigation never lands on a blank or black
+screen. Samples the DOM *and* averaged screenshot luminance every ~120ms *during* each
+transition, rather than checking the settled state, across slow 4G, 1.5s latency, a
+3s-stalled API, and a cold organiser dashboard. Runs in dark theme on purpose: that is
+the only theme where an empty `main` reads as black. Also asserts the 377 kB chart
+library loads as a separate async chunk after the dashboard layout paints.
+
+**`image-performance.mjs`** — 37 assertions on the event artwork path: content paints
+before the hero image, the reserved box shifts nothing (CLS attributable to the image),
+`srcSet` narrows what a 390px viewport downloads, a hover-warmed hero is not fetched
+twice, failures fall back to the category glyph, and a revisit is served from cache.
 
 **`design-system.mjs`** — walks 18 screen/viewport combinations (every route, in the
 role that can reach it, at 1440px and 390px) and enforces the five rules from

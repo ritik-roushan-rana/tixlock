@@ -8,7 +8,8 @@ import {
   useAuthStore,
 } from '@/store/auth';
 import type { UserRole } from '@/lib/api/types';
-import { EmptyState, FullPageSpinner } from '@/components/common/states';
+import { EmptyState } from '@/components/common/states';
+import { AuthPageSkeleton, GenericPageSkeleton } from '@/components/common/pageSkeletons';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -23,13 +24,28 @@ import { Button } from '@/components/ui/button';
  * session, and redirect a signed-in user to login.
  */
 
+/**
+ * What a guard shows while the persisted session is being read.
+ *
+ * Hydration normally resolves within the first frame — `hasHydrated()` is checked in
+ * the state initialiser for exactly that reason — so this is usually invisible. It
+ * still matters: it used to be `FullPageSpinner`, which put a second structure-less
+ * phase in front of the chunk-loading one on every protected route, and if hydration
+ * ever stalls (it has: see the onRehydrateStorage note in store/auth.ts) this is what
+ * the user stares at. A page-shaped shell degrades far better than a bare spinner.
+ */
+interface GuardProps {
+  /** Loading shell matching the routes this guard protects. */
+  fallback?: React.ReactNode;
+}
+
 /** Requires any signed-in user. */
-export function RequireAuth() {
+export function RequireAuth({ fallback }: GuardProps = {}) {
   const isSignedIn = useAuthStore(selectIsSignedIn);
   const hydrated = useAuthHydrated();
   const location = useLocation();
 
-  if (!hydrated) return <FullPageSpinner />;
+  if (!hydrated) return <>{fallback ?? <GenericPageSkeleton />}</>;
 
   if (!isSignedIn) {
     const next = `${location.pathname}${location.search}`;
@@ -40,12 +56,12 @@ export function RequireAuth() {
 }
 
 /** Requires one of the given roles. Assumes RequireAuth is an ancestor. */
-export function RequireRole({ roles }: { roles: UserRole[] }) {
+export function RequireRole({ roles, fallback }: { roles: UserRole[] } & GuardProps) {
   const user = useAuthStore((s) => s.user);
   const hydrated = useAuthHydrated();
   const location = useLocation();
 
-  if (!hydrated) return <FullPageSpinner />;
+  if (!hydrated) return <>{fallback ?? <GenericPageSkeleton />}</>;
 
   if (!user) {
     const next = `${location.pathname}${location.search}`;
@@ -74,12 +90,12 @@ export function RequireRole({ roles }: { roles: UserRole[] }) {
  * Inverse guard for /login and /register: a signed-in user has no reason to see
  * them, so send them to their role's landing page instead.
  */
-export function RedirectIfSignedIn() {
+export function RedirectIfSignedIn({ fallback }: GuardProps = {}) {
   const user = useAuthStore((s) => s.user);
   const isSignedIn = useAuthStore(selectIsSignedIn);
   const hydrated = useAuthHydrated();
 
-  if (!hydrated) return <FullPageSpinner />;
+  if (!hydrated) return <>{fallback ?? <AuthPageSkeleton />}</>;
   if (isSignedIn && user) return <Navigate to={landingPathForRole(user.role)} replace />;
 
   return <Outlet />;

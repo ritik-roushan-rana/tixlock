@@ -215,7 +215,15 @@ export default function EventsPage() {
         ) : query.isError ? (
           <ErrorState error={query.error} onRetry={() => void query.refetch()} />
         ) : query.isLoading ? (
-          <div className="grid grid-cols-1 gap-lg md:grid-cols-2 lg:grid-cols-3">
+          /* One live region on the container, not on each card: `Skeleton` is
+             aria-hidden, so without this a screen reader hears nothing at all while
+             the list loads, and six announcements would be worse than none. */
+          <div
+            role="status"
+            aria-live="polite"
+            className="grid grid-cols-1 gap-lg md:grid-cols-2 lg:grid-cols-3"
+          >
+            <span className="sr-only">Loading events</span>
             {Array.from({ length: 6 }).map((_, i) => (
               <EventCardSkeleton key={i} />
             ))}
