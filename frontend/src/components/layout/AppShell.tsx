@@ -55,11 +55,16 @@ function UserMenu() {
 
   if (!user) {
     return (
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" asChild>
+      <div className="flex items-center gap-sm">
+        <Button variant="ghost" asChild>
           <NavLink to="/login">Sign in</NavLink>
         </Button>
-        <Button size="sm" asChild>
+        {/* Ink, not the mock's lime. Chrome persists across every screen, so a lime
+            control here would sit beside the lime CTA each page already spends —
+            "Get tickets", "Hold seats", "Claim seat" — and the eye would have no way
+            to tell the page's action from the furniture. Lime in this bar is the
+            active-section rule and nothing else. */}
+        <Button asChild>
           <NavLink to="/register">Get started</NavLink>
         </Button>
       </div>
@@ -75,7 +80,9 @@ function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 pl-1.5">
+        {/* `outline` gives the trailing control the mock's 1px framed box, which is what
+            anchors the right end of the bar. */}
+        <Button variant="outline" className="gap-2 pl-1.5">
           {/* Square, not a circle. It was the last `rounded-full` left in the app's
               own markup, and the shape language here is 0px without exceptions. Solid
               ink carrying cream initials reads as the same kind of chip used for event
@@ -147,38 +154,58 @@ export function AppShell() {
         header would be simulating depth the design explicitly rejects.
       */}
       <header className="sticky top-0 z-40 border-b border-border-strong bg-background">
-        <div className="container flex h-16 items-center gap-4">
+        {/*
+          Three groups on a single baseline: wordmark, links, actions. `justify-between`
+          rather than an absolutely centred nav — the link group's width changes with
+          role, and a long display name in the account control would slide under an
+          absolute nav rather than push it. Drifting slightly off optical centre is the
+          cheaper compromise.
+        */}
+        <div className="container flex h-16 items-center justify-between gap-4">
           <NavLink
             to="/events"
-            className="heading shrink-0 text-2xl uppercase tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            // 36px Anton, close to the mock's 48px without letting the wordmark crowd
+            // the 64px bar. Weight stays 400 — `.heading` pins it, because the mock's
+            // `font-black` on a single-weight face only gets you synthetic bold, which
+            // smears a condensed design.
+            className="heading shrink-0 text-4xl uppercase tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             TixLock
           </NavLink>
 
-          <nav className="flex items-center gap-1 md:gap-2" aria-label="Main navigation">
+          {/* `h-full` on the links, not padding: the active rule has to land on the
+              header's own hairline, which only happens if the item spans the full 64px. */}
+          <nav className="flex h-full items-center gap-4 md:gap-lg" aria-label="Main navigation">
             {visibleNav.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
+                // The icon carries the label below md, where the text is hidden, so the
+                // accessible name has to come from the attribute in both cases.
+                aria-label={label}
                 className={({ isActive }) =>
                   cn(
-                    'inline-flex items-center gap-1.5 px-2 py-1.5 text-body-sm transition-colors md:px-3',
+                    'inline-flex h-full items-center px-1 text-body-md transition-colors md:px-sm',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    // 4px lime rule flush with the bottom of the bar marks the current
+                    // section. Transparent at the same weight when inactive, so the
+                    // label never shifts on navigation.
                     isActive
-                      ? // Lime underline marks the current section. A 2px rule rather
-                        // than a filled pill — the reference's active treatment.
-                        'border-b-2 border-lime font-bold text-foreground'
-                      : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
+                      ? 'border-b-4 border-lime font-bold text-foreground'
+                      : // Hover resolves to full ink, never to lime. Lime text on cream
+                        // is about 1.5:1 — the mock's `hover:text-secondary` would have
+                        // made every hovered link effectively invisible.
+                        'border-b-4 border-transparent text-muted-foreground hover:text-foreground'
                   )
                 }
               >
-                <Icon className="h-4 w-4" aria-hidden />
-                <span className="hidden sm:inline">{label}</span>
+                <Icon className="h-5 w-5 md:hidden" aria-hidden />
+                <span className="hidden md:inline">{label}</span>
               </NavLink>
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-sm">
             <ThemeToggle />
             <UserMenu />
           </div>
