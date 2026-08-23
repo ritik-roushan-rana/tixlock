@@ -31,7 +31,31 @@ const outbox = [];
  * `config.smtp.enabled` directly, which would have mis-classified Brevo sends as
  * console sends and pushed real mail into the test outbox.
  */
-const deliversForReal = () => config.brevo.enabled || config.smtp.enabled;
+const deliversForReal = () => !config.isTest && (config.brevo.enabled || config.smtp.enabled);
+
+/**
+ * Domains that can never receive mail, so sending to them only burns provider quota
+ * and sender reputation.
+ *
+ * RFC 2606 and RFC 6761 reserve these for documentation and testing; `.local` is
+ * mDNS. Every fixture address in this repo lands in one of them —
+ * `customer@ticketbooking.local`, `customer147@test.local`, `wlowner…@example.com`.
+ *
+ * This guard exists because those addresses reached the real provider: 651 sends in
+ * two days produced 625 soft bounces ("Unable to find MX of domain test.local"),
+ * which exhausted a free-plan send allowance and stopped genuine booking
+ * confirmations from going out. A 96% bounce rate is also how a sending account gets
+ * suspended outright, so this protects more than the credit balance.
+ */
+const UNROUTABLE_DOMAIN =
+  /@(?:[^@]*\.)?(?:test|example|invalid|localhost|local)$|@example\.(?:com|net|org)$/i;
+
+const isUnroutable = (to) =>
+  String(to ?? '')
+    .split(',')
+    .map((entry) => parseAddress(entry).email)
+    .filter(Boolean)
+    .every((email) => UNROUTABLE_DOMAIN.test(email));
 
 /** `"TixLock <no-reply@x.com>"` -> `{ name: 'TixLock', email: 'no-reply@x.com' }`. */
 function parseAddress(value) {
@@ -128,7 +152,16 @@ function createBrevoTransport() {
 function getTransport() {
   if (transport) return transport;
 
-  if (config.brevo.enabled) {
+  if (config.isTest) {
+    // Never a real transport under test, whatever the environment happens to hold.
+    //
+    // This used to fall through to the branches below, so a developer with SMTP_HOST
+    // or BREVO_API_KEY in their .env had `npm test` deliver every fixture message to
+    // the live provider — hundreds of them, to addresses like customer147@test.local.
+    // It also emptied `outbox`, which is what the mail assertions read, so those
+    // tests failed on exactly the machines that were doing the damage.
+    transport = nodemailer.createTransport({ jsonTransport: true });
+  } else if (config.brevo.enabled) {
     transport = createBrevoTransport();
     console.log('[mail] Brevo HTTPS API transport ready');
   } else if (config.smtp.enabled) {
@@ -160,6 +193,15 @@ function getTransport() {
 
 async function send({ to, subject, text, html, attachments }) {
   const message = { from: config.smtp.from, to, subject, text, html, attachments };
+
+  // Reserved domains never resolve, so handing one to the provider buys a guaranteed
+  // bounce. Recorded in the outbox exactly as the console transport would, so a smoke
+  // script driving seeded fixtures still sees its mail.
+  if (deliversForReal() && isUnroutable(to)) {
+    outbox.push({ to, subject, text, html, sentAt: new Date().toISOString() });
+    console.log(`[mail] (skipped, unroutable domain) to=${to} subject="${subject}"`);
+    return { sent: false, skipped: true };
+  }
 
   try {
     const info = await getTransport().sendMail(message);
