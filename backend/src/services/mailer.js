@@ -28,10 +28,10 @@ const outbox = [];
  *
  * The console transport is the only mode that fills `outbox`, so this is what
  * distinguishes "logged" from "sent" — previously that decision read
- * `config.smtp.enabled` directly, which would have mis-classified Brevo sends as
+ * `config.smtp.enabled` directly, which would have mis-classified HTTPS API sends as
  * console sends and pushed real mail into the test outbox.
  */
-const deliversForReal = () => !config.isTest && (config.brevo.enabled || config.smtp.enabled);
+const deliversForReal = () => !config.isTest && (config.mailjet.enabled || config.smtp.enabled);
 
 /**
  * Domains that can never receive mail, so sending to them only burns provider quota
@@ -67,60 +67,91 @@ function parseAddress(value) {
   return { email: raw };
 }
 
-/** Brevo takes a list of recipients; our call sites pass one address as a string. */
+/** Mailjet takes a list of recipients; our call sites pass one address as a string. */
 const parseRecipients = (value) =>
   (Array.isArray(value) ? value : String(value ?? '').split(','))
     .map((entry) => parseAddress(entry))
     .filter((addr) => addr.email);
 
 /**
- * Nodemailer custom transport backed by Brevo's HTTPS API.
+ * Nodemailer custom transport backed by Mailjet's HTTPS Send API v3.1.
  *
- * Implemented as a transport plugin rather than as a branch inside `send()` so
- * that every existing call site, template and attachment stays byte-identical —
- * the swap is invisible above `getTransport()`.
+ * Implemented as a transport plugin rather than as a branch inside `send()` so that
+ * every existing call site, template and attachment stays byte-identical — the swap
+ * is invisible above `getTransport()`.
  *
- * Note on the QR code: Brevo does not support CID/embedded images on
- * transactional email through either the API or its SMTP relay, so the
- * `<img src="cid:booking-qr">` in the confirmation template cannot render on this
- * path. The QR is delivered as a normal `.png` attachment instead, which is what
- * the plain-text part of that template already tells the recipient to look for.
+ * Two things about this API are easy to get wrong:
+ *
+ *  - the schema is PascalCase and wraps everything in a `Messages` array. Lowercase
+ *    keys are not merely ignored, they 400.
+ *  - **a 200 does not mean accepted.** v3.1 reports per-message outcomes inside the
+ *    body, so a message can be rejected under an HTTP 200 with
+ *    `Messages[0].Status === "error"`. Checking only `res.ok` is how a provider-side
+ *    refusal gets logged as a successful send, which is precisely the blindness that
+ *    hid an exhausted quota on the previous provider. Both are treated as failures
+ *    here.
  */
-function createBrevoTransport() {
+function createMailjetTransport() {
+  const auth = Buffer.from(`${config.mailjet.apiKey}:${config.mailjet.secretKey}`).toString(
+    'base64'
+  );
+
   return nodemailer.createTransport({
-    name: 'brevo-http',
+    name: 'mailjet-http',
     version: '1.0.0',
 
     send(mail, callback) {
       const data = mail.data || {};
-      const sender = parseAddress(data.from);
+      const from = parseAddress(data.from);
       const to = parseRecipients(data.to);
+      const html = String(data.html ?? '');
 
-      const attachment = (data.attachments || [])
-        .map((att) => {
-          const content = Buffer.isBuffer(att.content)
-            ? att.content
-            : att.content != null
-              ? Buffer.from(String(att.content))
-              : null;
-          if (!content) return null;
-          return { name: att.filename || 'attachment', content: content.toString('base64') };
-        })
-        .filter(Boolean);
+      // Mailjet does support CID embedding, via a separate `InlinedAttachments` list.
+      // An attachment is only routed there when the HTML actually references its
+      // `cid:` — otherwise it belongs in `Attachments`, where the recipient can
+      // download it. Today's confirmation template points at an absolute image URL
+      // and tells the reader the QR is attached, so the QR lands in `Attachments`;
+      // switch that template to `cid:booking-qr` and it becomes inline on its own.
+      const attachments = [];
+      const inlined = [];
+      for (const att of data.attachments || []) {
+        const content = Buffer.isBuffer(att.content)
+          ? att.content
+          : att.content != null
+            ? Buffer.from(String(att.content))
+            : null;
+        if (!content) continue;
+
+        const entry = {
+          ContentType: att.contentType || 'application/octet-stream',
+          Filename: att.filename || 'attachment',
+          Base64Content: content.toString('base64'),
+        };
+        if (att.cid && html.includes(`cid:${att.cid}`)) inlined.push({ ...entry, ContentID: att.cid });
+        else attachments.push(entry);
+      }
 
       const payload = {
-        sender,
-        to,
-        subject: data.subject,
-        ...(data.html ? { htmlContent: data.html } : {}),
-        ...(data.text ? { textContent: data.text } : {}),
-        ...(attachment.length ? { attachment } : {}),
+        Messages: [
+          {
+            From: { Email: from.email, ...(from.name ? { Name: from.name } : {}) },
+            To: to.map((addr) => ({
+              Email: addr.email,
+              ...(addr.name ? { Name: addr.name } : {}),
+            })),
+            Subject: data.subject,
+            ...(data.text ? { TextPart: data.text } : {}),
+            ...(html ? { HTMLPart: html } : {}),
+            ...(attachments.length ? { Attachments: attachments } : {}),
+            ...(inlined.length ? { InlinedAttachments: inlined } : {}),
+          },
+        ],
       };
 
-      fetch(config.brevo.baseUrl, {
+      fetch(config.mailjet.baseUrl, {
         method: 'POST',
         headers: {
-          'api-key': config.brevo.apiKey,
+          authorization: `Basic ${auth}`,
           'content-type': 'application/json',
           accept: 'application/json',
         },
@@ -132,17 +163,36 @@ function createBrevoTransport() {
         .then(async (res) => {
           const body = await res.text();
           if (!res.ok) {
-            // Surface Brevo's own message — it names the bad field, which a bare
-            // status code does not.
-            throw new Error(`Brevo API ${res.status}: ${body.slice(0, 300)}`);
+            // Surface Mailjet's own message — it names the offending field, which a
+            // bare status code does not.
+            throw new Error(`Mailjet API ${res.status}: ${body.slice(0, 300)}`);
           }
-          let messageId;
+
+          let parsed;
           try {
-            messageId = JSON.parse(body).messageId;
+            parsed = JSON.parse(body);
           } catch {
-            /* 2xx with an unparseable body still counts as accepted. */
+            throw new Error(`Mailjet API returned unparseable body: ${body.slice(0, 200)}`);
           }
-          callback(null, { messageId, envelope: { from: sender.email, to: to.map((t) => t.email) } });
+
+          const result = parsed.Messages?.[0];
+          if (!result || result.Status !== 'success') {
+            const reason = (result?.Errors || [])
+              .map((e) => `${e.ErrorCode || e.ErrorIdentifier || 'error'}: ${e.ErrorMessage}`)
+              .join('; ');
+            throw new Error(
+              `Mailjet rejected the message (Status=${result?.Status ?? 'unknown'})` +
+                (reason ? `: ${reason}` : `: ${body.slice(0, 300)}`)
+            );
+          }
+
+          const recipient = result.To?.[0];
+          callback(null, {
+            // MessageUUID is the handle Mailjet's own event and message endpoints
+            // take, so it is the one worth putting in a log line.
+            messageId: recipient?.MessageUUID || recipient?.MessageID,
+            envelope: { from: from.email, to: to.map((t) => t.email) },
+          });
         })
         .catch((err) => callback(err));
     },
@@ -156,14 +206,14 @@ function getTransport() {
     // Never a real transport under test, whatever the environment happens to hold.
     //
     // This used to fall through to the branches below, so a developer with SMTP_HOST
-    // or BREVO_API_KEY in their .env had `npm test` deliver every fixture message to
+    // or provider API keys in their .env had `npm test` deliver every fixture message to
     // the live provider — hundreds of them, to addresses like customer147@test.local.
     // It also emptied `outbox`, which is what the mail assertions read, so those
     // tests failed on exactly the machines that were doing the damage.
     transport = nodemailer.createTransport({ jsonTransport: true });
-  } else if (config.brevo.enabled) {
-    transport = createBrevoTransport();
-    console.log('[mail] Brevo HTTPS API transport ready');
+  } else if (config.mailjet.enabled) {
+    transport = createMailjetTransport();
+    console.log('[mail] Mailjet HTTPS API transport ready');
   } else if (config.smtp.enabled) {
     transport = nodemailer.createTransport({
       host: config.smtp.host,
@@ -183,7 +233,7 @@ function getTransport() {
     transport = nodemailer.createTransport({ jsonTransport: true });
     if (!config.isTest) {
       console.log(
-        '[mail] neither BREVO_API_KEY nor SMTP_HOST set — using console transport, mail will be logged not sent'
+        '[mail] no MJ_APIKEY_PUBLIC/MJ_APIKEY_PRIVATE and no SMTP_HOST — using console transport, mail will be logged not sent'
       );
     }
   }
@@ -256,13 +306,15 @@ const wrap = (title, bodyHtml) => `
  *    GET /api/bookings/qr/:ref.png
  *  - as a downloadable .png attachment, so the ticket survives offline
  *
- * `cid:` was tried first and does not work on this stack. Brevo does not support
- * CID/embedded images on transactional email through either its HTTPS API or its
- * SMTP relay, and the HTTPS API's attachment schema has no Content-ID field at
- * all, so the reference arrives at Gmail with no matching MIME part and renders as
- * a broken image. A `data:` URI is not a workaround either — Gmail strips those.
- * An absolute URL is the only form Gmail renders; it fetches it via its image
- * proxy, which is also why that endpoint cannot require authentication.
+ * The absolute URL is deliberate, and survives the move to Mailjet even though
+ * Mailjet *does* support CID embedding (see `InlinedAttachments` in the transport).
+ * Two reasons to keep it: the URL renders in Gmail, which fetches it through its
+ * image proxy, whereas Mailjet's own issue tracker has inline attachments failing in
+ * Thunderbird and GSuite; and the same endpoint backs the "view it here" link in the
+ * text part. A `data:` URI is not an option either — Gmail strips those.
+ *
+ * That the QR endpoint is fetched by an image proxy rather than the recipient is
+ * also why it cannot require authentication.
  */
 async function sendBookingConfirmation({ to, name, booking, show, seats, qrBuffer }) {
   const seatsText = seatList(seats);

@@ -84,11 +84,11 @@ router.post(
 /**
  * GET /api/bookings/qr/:ref.png — the ticket QR as a PNG image. Public, no auth.
  *
- * Exists so the booking confirmation email can render the QR inline. Mail clients
- * cannot resolve `cid:` references here (Brevo does not support CID embedding on
- * transactional email, via its API or its SMTP relay) and Gmail strips
- * `data:` URIs, so an absolute `https://` image URL is the only thing that
- * actually displays. Gmail fetches it through its image proxy.
+ * Exists so the booking confirmation email can render the QR inline, and so the
+ * text part has somewhere to point. Gmail strips `data:` URIs, and `cid:` embedding
+ * is unreliable across clients even on providers that support it, so an absolute
+ * `https://` image URL is the dependable form. Gmail fetches it through its image
+ * proxy — which is the reason this endpoint has to stay unauthenticated.
  *
  * Why it is safe to leave unauthenticated:
  *

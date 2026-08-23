@@ -151,17 +151,30 @@ postgresql://USER:PASSWORD@HOST:PORT/DATABASE
 | `SWEEP_ENABLED` | `true` | Set `false` on extra instances |
 | `PG_POOL_MAX` | `10` | Keep modest on free tiers |
 | `PGSSL` | auto | TLS auto-enabled for non-local hosts |
-| `SMTP_HOST` | *(empty)* | Blank = log emails to console instead of sending |
+| `MJ_APIKEY_PUBLIC` / `MJ_APIKEY_PRIVATE` | *(empty)* | Mailjet Send API v3.1 — preferred, runs over 443 |
+| `SMTP_HOST` | *(empty)* | SMTP fallback, used only when the Mailjet keys are empty |
 | `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | | Mailtrap works well for dev |
-| `MAIL_FROM` | `TixLock <no-reply@...>` | |
+| `MAIL_FROM` | `TixLock <no-reply@...>` | Must be a validated sender at the provider |
 | `PUBLIC_URL` | `http://localhost:3000` | Base URL for waitlist offer links in emails |
+| `API_PUBLIC_URL` | Railway domain | This API's own origin; backs the QR image in emails |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | see `.env.example` | Used by `npm run seed` |
 
 `.env.example` documents every variable with inline commentary.
 
-**Email is optional in development.** With `SMTP_HOST` blank the mailer switches to a
+**Email delivery order.** Both Mailjet keys → its HTTPS API; else `SMTP_HOST` → SMTP;
+else a console transport. Deploying to Railway means using the HTTPS path: Railway
+blocks outbound SMTP on Free/Trial/Hobby plans, so every SMTP port times out there.
+
+**Email is optional in development.** With none of those set, the mailer switches to a
 console transport, so the whole application — including waitlist offers — runs end to
-end with no SMTP account. Messages are logged rather than sent.
+end with no provider account. Messages are logged rather than sent.
+
+**Tests never send mail.** `NODE_ENV=test` forces the console transport regardless of
+configuration, and outside tests any recipient on a non-routable domain (`.test`,
+`.example`, `.invalid`, `.localhost`, `.local`, `example.com`) is skipped. Both guards
+exist because the suite once delivered its fixtures for real: 651 sends in two days,
+625 of them bouncing off `test.local`, which exhausted the provider allowance and
+stopped genuine booking confirmations going out.
 
 ---
 
@@ -682,11 +695,25 @@ In production, add a new migration instead — history is forward-only.
 **Tests fail with `Refusing to reset a database whose URL does not contain "test"`.**
 Safety guard. Point `TEST_DATABASE_URL` at a dedicated test database.
 
-**Emails are not arriving.**
-With `SMTP_HOST` blank the mailer logs instead of sending; look for
-`[mail] (not sent) to=…` in the server output. This is intentional so the app runs
-without an SMTP account. Set the `SMTP_*` variables (Mailtrap works well) to send for
-real. Email failures never affect bookings.
+**Emails are not arriving.** Read the boot line first — it names the transport in use:
+`[mail] Mailjet HTTPS API transport ready`, `[mail] SMTP transport ready (host:port)`,
+or the console fallback. Then check the per-send lines:
+
+| Log line | Meaning |
+|---|---|
+| `[mail] (not sent) to=…` | Console transport. Nothing is configured; intentional in dev |
+| `[mail] (skipped, unroutable domain) to=…` | Recipient is on a reserved domain that cannot receive mail |
+| `[mail] failed to send "…" to …: <reason>` | The provider refused it. The reason is verbatim from them |
+| `[mail] sent to=… id=…` | The provider accepted it |
+
+An accepted message can still go undelivered — quota exhaustion and suppression
+happen after acceptance — so if the log says `sent` and no mail arrives, the answer is
+in the provider's own event log rather than here. For Mailjet that is Statistics →
+Messages, or `GET /v3/messages`. Check the sender in `MAIL_FROM` is validated and the
+daily cap (200 on the free tier) is not spent.
+
+Email failures never affect bookings: mail is a post-commit side effect and the mailer
+never throws.
 
 **Seats look stuck as held.**
 Check the sweeper is running — the boot log prints `[sweep] scheduled "*/15 * * * * *"`.

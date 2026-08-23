@@ -110,20 +110,26 @@ const config = Object.freeze({
   bcryptRounds: int('BCRYPT_ROUNDS', isTest ? 4 : 10),
 
   /**
-   * Brevo's HTTPS transactional API, used in preference to SMTP when an API key
-   * is present.
+   * Mailjet's HTTPS Send API v3.1, used in preference to SMTP when both keys are
+   * present.
    *
-   * This exists because Railway blocks outbound SMTP on Free/Trial/Hobby plans
-   * (ports 25/465/587/2525 all time out at the network layer), so the SMTP path
-   * cannot deliver from a Railway deployment at all. The HTTPS API runs over 443
-   * and is unaffected. SMTP is kept as a fallback for local development and for
-   * hosts that do allow it.
+   * An HTTPS path rather than SMTP because Railway blocks outbound SMTP on
+   * Free/Trial/Hobby plans — ports 25/465/587/2525 all time out at the network
+   * layer, so no SMTP configuration can deliver from a Railway deployment. Port 443
+   * is unaffected. SMTP is kept as a fallback for local development and for hosts
+   * that allow it.
+   *
+   * Both halves are required: Mailjet authenticates with HTTP Basic, api key as the
+   * username and secret key as the password. Half a credential pair is not a usable
+   * configuration, so `enabled` demands both rather than silently 401ing on
+   * every send.
    */
-  brevo: Object.freeze({
-    apiKey: process.env.BREVO_API_KEY || '',
-    baseUrl: process.env.BREVO_API_URL || 'https://api.brevo.com/v3/smtp/email',
+  mailjet: Object.freeze({
+    apiKey: process.env.MJ_APIKEY_PUBLIC || '',
+    secretKey: process.env.MJ_APIKEY_PRIVATE || '',
+    baseUrl: process.env.MJ_API_URL || 'https://api.mailjet.com/v3.1/send',
     get enabled() {
-      return Boolean(process.env.BREVO_API_KEY);
+      return Boolean(process.env.MJ_APIKEY_PUBLIC && process.env.MJ_APIKEY_PRIVATE);
     },
   }),
 
@@ -148,9 +154,7 @@ const config = Object.freeze({
    * This API's own public origin — distinct from publicUrl above, which points at
    * the frontend.
    *
-   * Needed because email clients cannot render `cid:` embedded images here (Brevo
-   * does not support CID on transactional mail, and the HTTPS API has no field for
-   * it), so the QR in the confirmation email is referenced as an absolute
+   * Needed because the QR in the confirmation email is referenced as an absolute
    * `https://` image URL served by this service. Railway injects
    * RAILWAY_PUBLIC_DOMAIN, so this normally needs no configuration.
    */
