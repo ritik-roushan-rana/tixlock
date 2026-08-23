@@ -11,6 +11,11 @@ interface PosterProps {
   className?: string;
   /** Poster art is decorative when a text title sits beside it. */
   decorative?: boolean;
+  /**
+   * Candidate widths. Without this, `sizes` is inert — the browser has one URL to
+   * choose from — which is how a 390px phone ended up downloading the desktop asset.
+   */
+  srcSet?: string;
   sizes?: string;
   /** Eager-load the hero image; everything below the fold stays lazy. */
   priority?: boolean;
@@ -54,6 +59,7 @@ export function Poster({
   type,
   className,
   decorative = false,
+  srcSet,
   sizes,
   priority = false,
   blend = 'none',
@@ -75,16 +81,27 @@ export function Poster({
       ) : (
         <img
           src={src}
+          srcSet={srcSet}
           alt={decorative ? '' : alt}
           aria-hidden={decorative || undefined}
           sizes={sizes}
           loading={priority ? 'eager' : 'lazy'}
           decoding="async"
           fetchPriority={priority ? 'high' : 'auto'}
+          // Fires for a cache hit too, including one served from a warm preload, so
+          // an already-cached hero resolves on its first commit rather than fading in.
+          ref={(node) => {
+            // A hero restored from cache can complete before React attaches onLoad,
+            // and the event never replays — that left the image stuck at opacity-0,
+            // showing an empty tonal block over a fully downloaded picture.
+            if (node?.complete && node.naturalWidth > 0) setStatus('loaded');
+          }}
           onLoad={() => setStatus('loaded')}
           onError={() => setStatus('error')}
           className={cn(
-            'absolute inset-0 h-full w-full object-cover transition-opacity duration-500',
+            // 200ms, down from 500ms. The fade is polish, but half a second of it runs
+            // *after* the bytes have arrived and reads as part of the load delay.
+            'absolute inset-0 h-full w-full object-cover transition-opacity duration-200',
             blend === 'luminosity' && 'opacity-90 mix-blend-luminosity',
             blend === 'multiply' && 'opacity-80 mix-blend-multiply',
             status === 'loaded' ? 'opacity-100' : 'opacity-0',

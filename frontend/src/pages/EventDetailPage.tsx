@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, CalendarX2, Clapperboard, MapPin, Music4, User } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -8,9 +8,9 @@ import { eventsApi } from '@/lib/api/endpoints';
 import { queryKeys } from '@/lib/queryKeys';
 import { formatMoney, toMoneyOrNull } from '@/lib/money';
 import { formatDate, formatDateShort, formatTime, isPast } from '@/lib/datetime';
-import { eventBackdrop, venuePhoto } from '@/lib/posters';
+import { eventBackdrop, eventBackdropSrcSet, HERO_SIZES, venuePhoto } from '@/lib/posters';
 import { eventTheme } from '@/lib/eventTheme';
-import type { EventShow } from '@/lib/api/types';
+import type { EventDetail, EventListItem, EventShow } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Poster } from '@/components/common/Poster';
@@ -35,11 +35,71 @@ export default function EventDetailPage() {
   const { eventId: eventIdParam } = useParams<{ eventId: string }>();
   const eventId = Number(eventIdParam);
 
+  const queryClient = useQueryClient();
+
+  /**
+   * The same event, if any cached list already described it.
+   *
+   * The list and detail endpoints use different query keys, so arriving here was
+   * always a cache miss: the page showed a full skeleton and — the actual performance
+   * bug — the hero `<img>` did not exist in the DOM until `GET /events/:id` came back.
+   * The image chain (DNS, TLS, a 302, then the download) could only start after the
+   * API round trip, which is why the page appeared well before the artwork.
+   *
+   * Every field the hero needs is already in the list response the user just clicked
+   * from. Reading it here lets the `<img>` mount on the first frame after the route
+   * change, so the image downloads *alongside* the API request rather than after it.
+   *
+   * Matched against `events.all` to catch any cached list regardless of its filters,
+   * plus `events.mine` for the organiser's own list. Detail entries live under the
+   * same prefix but hold an object rather than an array, hence the guard.
+   */
+  const seeded = useMemo(() => {
+    if (!Number.isFinite(eventId) || eventId <= 0) return undefined;
+    for (const [, data] of queryClient.getQueriesData({ queryKey: queryKeys.events.all })) {
+      if (!Array.isArray(data)) continue;
+      const hit = (data as EventListItem[]).find((item) => item?.id === eventId);
+      if (hit) return hit;
+    }
+    return undefined;
+  }, [queryClient, eventId]);
+
   const query = useQuery({
     queryKey: queryKeys.events.detail(eventId),
     queryFn: () => eventsApi.get(eventId),
     enabled: Number.isFinite(eventId) && eventId > 0,
+    /**
+     * Renders the hero, title, venue and description instantly from the list entry.
+     *
+     * `shows` is genuinely absent — the list endpoint does not carry it — so it starts
+     * empty and the showtime panel renders its own skeleton while the real response is
+     * in flight. That is the one thing this cannot fake, and faking it would be worse:
+     * an empty `shows` array reads as "no showings scheduled", which is a lie about
+     * inventory. `isPlaceholderData` is what the panel keys off.
+     *
+     * Deliberately not `initialData`: that would be written into the cache and treated
+     * as a real, fresh detail response, so the incomplete `shows: []` would satisfy
+     * `staleTime` and the page could sit there never fetching the showtimes.
+     */
+    placeholderData: seeded
+      ? ({
+          id: seeded.id,
+          title: seeded.title,
+          type: seeded.type,
+          description: seeded.description,
+          organiser_id: seeded.organiser_id,
+          organiser_name: seeded.organiser_name,
+          venue_id: seeded.venue_id,
+          venue_name: seeded.venue_name,
+          venue_address: seeded.venue_address,
+          created_at: seeded.created_at,
+          shows: [],
+        } satisfies EventDetail)
+      : undefined,
   });
+
+  // True while the hero and copy are real but the showtimes have not landed yet.
+  const awaitingShows = query.isPlaceholderData;
 
   const { upcoming, past } = useMemo(() => {
     const shows = query.data?.shows ?? [];
@@ -95,6 +155,8 @@ export default function EventDetailPage() {
   // Pricing is per-show; the first show stands in for the headline tier list, and the
   // caveat below the list says so rather than implying it is universal.
   const allPricing = event.shows[0]?.pricing ?? [];
+  // Real count once the detail response lands; the list entry's summary until then.
+  const showingCount = awaitingShows ? (seeded?.show_count ?? null) : event.shows.length;
   // The soonest upcoming showing is the primary path, so it gets the one lime action.
   const nextShow = upcoming[0] ?? null;
 
@@ -105,12 +167,16 @@ export default function EventDetailPage() {
       <div className="grid gap-lg lg:grid-cols-[1fr_22rem]">
         {/* --- Editorial column --------------------------------------------- */}
         <div className="space-y-md">
+          {/* `srcSet` + `sizes` must stay identical to what EventCard warms on intent
+              (see preloadEventHero), or the browser selects a candidate that was never
+              preloaded and the request is made twice. */}
           <Poster
-            src={eventBackdrop(event.id, 1200)}
+            src={eventBackdrop(event.id, 1280)}
+            srcSet={eventBackdropSrcSet(event.id)}
             alt={event.title}
             type={event.type}
             priority
-            sizes="(max-width: 1024px) 100vw, 66vw"
+            sizes={HERO_SIZES}
             className="aspect-[16/10] w-full"
           />
 
@@ -119,11 +185,16 @@ export default function EventDetailPage() {
               <TypeGlyph className="h-3 w-3" aria-hidden />
               {theme.label}
             </span>
-            <span className="eyebrow inline-flex items-center gap-1 border border-border-strong px-2 py-1">
-              {/* EventDetail omits show_count (it ships the full shows array instead),
-                  so this counts the array rather than reading a summary field. */}
-              {event.shows.length} {event.shows.length === 1 ? 'showing' : 'showings'}
-            </span>
+            {/* EventDetail omits show_count (it ships the full shows array instead), so
+                this counts the array. While seeded from the list, the array is empty
+                but that list entry carries a real `show_count` — using it avoids a chip
+                that momentarily claims "0 showings". Hidden entirely if neither source
+                can answer. */}
+            {showingCount !== null ? (
+              <span className="eyebrow inline-flex items-center gap-1 border border-border-strong px-2 py-1">
+                {showingCount} {showingCount === 1 ? 'showing' : 'showings'}
+              </span>
+            ) : null}
           </div>
 
           <h1 className="heading text-display-hero uppercase">{event.title}</h1>
@@ -155,7 +226,27 @@ export default function EventDetailPage() {
               Select showtime
             </h2>
 
-            {byDate.length === 0 ? (
+            {awaitingShows ? (
+              /*
+               * Seeded from the list, so the artwork and copy above are real but the
+               * showtimes are still in flight. A skeleton here rather than the empty
+               * state, which would otherwise claim the event has no showings.
+               *
+               * Row count comes from the list entry's `show_count` and the row height
+               * matches ShowRow's, so this block is close to the height of what
+               * replaces it. A fixed three-row guess made the panel grow or shrink on
+               * arrival, and since this column sits in a grid the whole page below it —
+               * the footer, measurably — moved with it.
+               */
+              <div className="space-y-2" aria-busy="true">
+                <Skeleton className="h-4 w-24" />
+                {Array.from({ length: Math.min(Math.max(seeded?.show_count ?? 2, 1), 6) }).map(
+                  (_, i) => (
+                    <Skeleton key={i} className="h-[3.5rem] w-full" />
+                  )
+                )}
+              </div>
+            ) : byDate.length === 0 ? (
               <EmptyState
                 icon={<CalendarX2 className="h-5 w-5" />}
                 title="No upcoming showings"

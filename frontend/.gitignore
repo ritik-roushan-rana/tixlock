@@ -1,11 +1,11 @@
 node_modules/
 dist/
 dist-ssr/
-# Throwaway build output and Playwright scratch scripts from local UI
-# verification. They are regenerated on demand and mean nothing to a clone.
+# Throwaway build output and scratch scripts from local UI verification. They are
+# regenerated on demand and mean nothing to a clone. The underscore prefix is the
+# repo's convention for a throwaway script; real tooling lives under scripts/.
 dist-verify/
-_shot_*.mjs
-_dbg_*.mjs
+_*.mjs
 *.local
 .env
 .env.local

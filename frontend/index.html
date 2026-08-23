@@ -24,6 +24,20 @@
       href="https://fonts.googleapis.com/css2?family=Anton&family=Public+Sans:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
+    <!--
+      Event artwork lives on picsum, and every URL there is a 302 from picsum.photos
+      to fastly.picsum.photos. That is two hosts to resolve and two TLS handshakes
+      before a single pixel moves: measured at ~720ms cold, ~345ms with warm DNS,
+      entirely ahead of the image download. Both hosts are hinted so that setup
+      happens while the app shell and API request are in flight.
+
+      `crossorigin` is required on the CDN hint: the images are fetched anonymously,
+      and a preconnect whose credentials mode disagrees with the eventual request
+      opens a second connection instead of reusing the warmed one.
+    -->
+    <link rel="preconnect" href="https://picsum.photos" />
+    <link rel="preconnect" href="https://fastly.picsum.photos" crossorigin />
+
     <!-- Inline SVG favicon: avoids a 404 for /favicon.ico without shipping a binary. -->
     <link
       rel="icon"

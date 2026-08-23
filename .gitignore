@@ -5,6 +5,9 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# Explicit negation so the documented template survives any broadening of the rules
+# above. Both backend/.env.example and frontend/.env.example are required by a clone.
+!.env.example
 
 # Build output
 dist/
@@ -14,6 +17,15 @@ build/
 
 # Generated screenshots from the E2E design audit (scripts/e2e/*.mjs)
 _shots/
+
+# Scratch scripts written during local investigation — measurement harnesses,
+# screenshot drivers, one-off probes. Everything worth keeping lives under
+# scripts/, so an underscore prefix is the convention for "throwaway".
+_*.mjs
+
+# Temporary files
+*.tmp
+*.temp
 
 # Database dumps and local database files
 *.sql.gz

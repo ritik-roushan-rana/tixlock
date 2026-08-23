@@ -4,7 +4,8 @@ import { ArrowRight, CalendarDays, MapPin, Sparkle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatMoney, toMoneyOrNull } from '@/lib/money';
 import { formatDateShort } from '@/lib/datetime';
-import { eventBackdrop } from '@/lib/posters';
+import { eventBackdrop, eventBackdropSrcSet, preloadEventHero } from '@/lib/posters';
+import { prefetchEventDetailRoute } from '@/routes/prefetch';
 import { eventTheme } from '@/lib/eventTheme';
 import type { EventListItem } from '@/lib/api/types';
 import { Poster } from '@/components/common/Poster';
@@ -38,6 +39,12 @@ export function FeaturedEvent({ event }: { event: EventListItem }) {
   const theme = eventTheme(event.type);
   const fromPrice = toMoneyOrNull(event.from_price);
 
+  /** Chunk + hero, same as the grid cards. See EventCard for why the chunk matters. */
+  const warmDetail = () => {
+    prefetchEventDetailRoute();
+    preloadEventHero(event.id);
+  };
+
   return (
     <section
       aria-labelledby="featured-title"
@@ -47,6 +54,7 @@ export function FeaturedEvent({ event }: { event: EventListItem }) {
     >
       <Poster
         src={eventBackdrop(event.id, 1600)}
+        srcSet={eventBackdropSrcSet(event.id)}
         alt={event.title}
         type={event.type}
         decorative
@@ -104,7 +112,14 @@ export function FeaturedEvent({ event }: { event: EventListItem }) {
           {/* The one lime action on this screen. Uses the primitive's `lime` variant
               rather than inline colour classes, so the rule stays enforceable. */}
           <Button asChild variant="lime" size="xl" className="focus-visible:ring-offset-panel">
-            <NavLink to={`/events/${event.id}`}>
+            {/* Same intent warm as the grid cards. The hero here is 100vw while the
+                detail hero is 66vw on desktop, so they resolve to different candidates
+                and this is not redundant. */}
+            <NavLink
+              to={`/events/${event.id}`}
+              onPointerEnter={warmDetail}
+              onFocus={warmDetail}
+            >
               Get tickets
               <ArrowRight className="h-4 w-4" aria-hidden />
             </NavLink>

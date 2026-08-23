@@ -4,7 +4,8 @@ import { CalendarClock, Clapperboard, Music4 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatMoney, toMoneyOrNull } from '@/lib/money';
 import { formatDateShort } from '@/lib/datetime';
-import { eventPoster } from '@/lib/posters';
+import { eventPoster, eventPosterSrcSet, preloadEventHero } from '@/lib/posters';
+import { prefetchEventDetailRoute } from '@/routes/prefetch';
 import { eventTheme } from '@/lib/eventTheme';
 import type { EventListItem } from '@/lib/api/types';
 import { Poster } from '@/components/common/Poster';
@@ -30,15 +31,44 @@ export function EventCard({ event }: { event: EventListItem }) {
   const fromPrice = toMoneyOrNull(event.from_price);
   const TypeGlyph = event.type === 'concert' ? Music4 : Clapperboard;
 
+  /**
+   * Warm both halves of the next screen: its code chunk and its hero image.
+   *
+   * The chunk matters as much as the image. Without it the click mounts a Suspense
+   * fallback that is far shorter than the real page, so the layout collapses and
+   * springs back — the largest single layout shift on this route.
+   */
+  const warmDetail = () => {
+    prefetchEventDetailRoute();
+    preloadEventHero(event.id);
+  };
+
   return (
     <NavLink
       to={`/events/${event.id}`}
       aria-label={`${event.title} at ${event.venue_name}`}
+      /*
+       * Warm the detail hero on intent.
+       *
+       * The card's artwork is a 2:3 portrait crop and the detail hero is a 16:9
+       * backdrop, so they are different URLs by design and navigating could never
+       * reuse the card's bytes. Starting the hero here means the 302, both TLS
+       * handshakes and usually the download itself are finished before the route
+       * changes.
+       *
+       * `pointerenter` rather than `mouseenter` so a pen or a touch that lands without
+       * a click still counts; `focus` covers keyboard traversal. Both funnel into a
+       * deduped, low-priority fetch, so sweeping the pointer across a grid costs one
+       * request per card at most and never competes with the current page.
+       */
+      onPointerEnter={warmDetail}
+      onFocus={warmDetail}
       className="group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
     >
       <div className="relative mb-2 aspect-[4/5] w-full overflow-hidden bg-card">
         <Poster
           src={eventPoster(event.id, 600)}
+          srcSet={eventPosterSrcSet(event.id)}
           alt={event.title}
           type={event.type}
           decorative
