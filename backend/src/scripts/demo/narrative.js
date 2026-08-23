@@ -9,10 +9,10 @@
  * no direct writes to `show_seats`, `bookings` or `waitlist`. That is the point.
  * Hand-written INSERTs would let the demo present states the application can never
  * actually reach: a booking with no matching hold, a waitlist offer on a category that
- * still has seats free, a `held` seat with no expiry. Every state below is reachable by
- * a customer clicking buttons, because it was produced by the code those clicks run —
- * and the schema's own CHECK constraints agree, which is the cheapest available proof
- * that the demo is not lying.
+ * still has seats free, a `held` seat with no expiry. Every state below is reachable by a
+ * customer clicking buttons, because it was produced by the code those clicks run — and
+ * the schema's own CHECK constraints agree, which is the cheapest available proof that
+ * the demo is not lying.
  *
  * Order is load-bearing and reads top to bottom. You cannot cancel what nobody booked,
  * and `joinWaitlist` refuses outright while even one seat in the category is still
@@ -28,8 +28,8 @@ const waitlistService = require('../../services/waitlistService');
  * The next N available seats of a category, in seating order.
  *
  * A read, so it goes straight to SQL. Ordering by row then seat number means demo
- * bookings fill from the front of the house the way real ones do, instead of
- * scattering across the map by primary key.
+ * bookings fill from the front of the house the way real ones do, instead of scattering
+ * across the map by primary key.
  */
 async function availableSeats(showId, category, count) {
   const { rows } = await query(
@@ -83,7 +83,14 @@ async function book(ctx, { customer, showId, category, count }) {
   return result.booking;
 }
 
-/** Sell every remaining seat in a category, in chunks, so the tier ends up sold out. */
+/**
+ * Sell every remaining seat in a category, in fixed-size chunks.
+ *
+ * Chunk size is not cosmetic. Cancelling one of these bookings later releases the whole
+ * chunk at once, and each released seat is a separate offer to the queue — so the chunk
+ * size decides how many offers a single cancellation produces. Act 4 depends on that
+ * being exactly two.
+ */
 async function sellOut(ctx, { showId, category, buyers, chunk }) {
   let remaining = await countAvailable(showId, category);
   let i = 0;
@@ -117,8 +124,8 @@ async function joinQueue(ctx, { customer, showId, category }) {
  * Read back the token an offer email would have carried.
  *
  * `cancelBooking` does not return offer tokens, deliberately — they are secrets that
- * belong in one recipient's inbox and nowhere else. The demo needs one in order to
- * redeem it, so it is read from the row it was written to.
+ * belong in one recipient's inbox and nowhere else. The demo needs one in order to redeem
+ * it, so it is read from the row it was written to.
  */
 async function offerTokenFor(showId, customerId) {
   const { rows } = await query(
@@ -141,154 +148,194 @@ async function play(ctx) {
   const facts = {};
 
   /* --- Act 1: ordinary trade -------------------------------------------
-     Enough spread that the organiser dashboards have something to report and no
-     screen in the app is empty. The past Interstellar showing is included so
-     revenue has history rather than only forecasts. */
+     Partial occupancy across every listing, so the organiser dashboard has real
+     figures to report, no screen in the app is empty, and a customer browsing
+     sees a seat map with genuine gaps in it rather than a wall of one colour.
+     The past Interstellar showing is booked too, so revenue has history rather
+     than only forecasts. */
 
-  log('act 1 — ordinary bookings across both organisers');
+  log('act 1 — ordinary bookings across all five listings');
 
-  const pastInterstellar = shows('interstellar', 0);
-  await book(ctx, { customer: 'aarav', showId: pastInterstellar, category: 'Premium', count: 2 });
-  await book(ctx, { customer: 'rohan', showId: pastInterstellar, category: 'Standard', count: 3 });
+  const interPast = shows('interstellar', 0);
+  await book(ctx, { customer: 'customer1', showId: interPast, category: 'Gold', count: 2 });
+  await book(ctx, { customer: 'arjun', showId: interPast, category: 'Standard', count: 3 });
 
-  const interFriday = shows('interstellar', 1);
-  await book(ctx, { customer: 'aarav', showId: interFriday, category: 'Recliner', count: 2 });
-  await book(ctx, { customer: 'priya', showId: interFriday, category: 'Premium', count: 3 });
-  await book(ctx, { customer: 'rohan', showId: interFriday, category: 'Standard', count: 2 });
-  await book(ctx, { customer: 'meera', showId: interFriday, category: 'Standard', count: 4 });
-  await book(ctx, { customer: 'dev', showId: shows('interstellar', 3), category: 'Premium', count: 2 });
+  const interFri = shows('interstellar', 1);
+  await book(ctx, { customer: 'customer1', showId: interFri, category: 'Premium', count: 2 });
+  await book(ctx, { customer: 'customer2', showId: interFri, category: 'Gold', count: 3 });
+  await book(ctx, { customer: 'neha', showId: interFri, category: 'Standard', count: 2 });
+  await book(ctx, { customer: 'meera', showId: interFri, category: 'Standard', count: 4 });
+  await book(ctx, { customer: 'dev', showId: shows('interstellar', 3), category: 'Gold', count: 2 });
 
-  const laapataaMatinee = shows('laapataa', 0);
-  await book(ctx, { customer: 'zoya', showId: laapataaMatinee, category: 'Premium', count: 3 });
+  const avengers = shows('avengers', 0);
+  await book(ctx, { customer: 'customer2', showId: avengers, category: 'Premium', count: 2 });
+  await book(ctx, { customer: 'vikram', showId: avengers, category: 'Gold', count: 3 });
+  await book(ctx, { customer: 'ananya', showId: avengers, category: 'Standard', count: 4 });
+  await book(ctx, { customer: 'neha', showId: shows('avengers', 1), category: 'Standard', count: 2 });
+
+  const duneMatinee = shows('dune', 0);
+  await book(ctx, { customer: 'arjun', showId: duneMatinee, category: 'Gold', count: 3 });
   const toCancel = await book(ctx, {
-    customer: 'aarav',
-    showId: laapataaMatinee,
+    customer: 'customer1',
+    showId: duneMatinee,
     category: 'Standard',
     count: 1,
   });
-  await book(ctx, { customer: 'vikram', showId: shows('laapataa', 1), category: 'Recliner', count: 2 });
+  await book(ctx, { customer: 'meera', showId: shows('dune', 1), category: 'Premium', count: 2 });
 
-  await book(ctx, { customer: 'ananya', showId: shows('kantara', 0), category: 'Recliner', count: 2 });
-  await book(ctx, { customer: 'dev', showId: shows('kantara', 0), category: 'Standard', count: 3 });
-
-  const arijitNight1 = shows('arijit', 0);
-  await book(ctx, { customer: 'aarav', showId: arijitNight1, category: 'Premium', count: 2 });
-  await book(ctx, { customer: 'priya', showId: arijitNight1, category: 'Premium', count: 3 });
-  await book(ctx, { customer: 'dev', showId: arijitNight1, category: 'General', count: 5 });
-  await book(ctx, { customer: 'meera', showId: arijitNight1, category: 'General', count: 4 });
-
-  // Night 2 leaves Golden Circle untouched, so one event shows a sold-out tier and
-  // an open tier side by side.
-  const arijitNight2 = shows('arijit', 1);
-  await book(ctx, { customer: 'vikram', showId: arijitNight2, category: 'General', count: 6 });
-  await book(ctx, { customer: 'ananya', showId: arijitNight2, category: 'Premium', count: 2 });
-
-  await book(ctx, { customer: 'priya', showId: shows('coldplay', 0), category: 'General', count: 2 });
-  await book(ctx, { customer: 'aarav', showId: shows('coldplay', 0), category: 'Premium', count: 2 });
-
-  const jazzThisWeek = shows('jazz', 0);
-  await book(ctx, { customer: 'aarav', showId: jazzThisWeek, category: 'Standard', count: 2 });
-  await book(ctx, { customer: 'meera', showId: jazzThisWeek, category: 'Standard', count: 3 });
-  await book(ctx, { customer: 'dev', showId: shows('jazz', 1), category: 'Standard', count: 2 });
+  const coldplayNight1 = shows('coldplay', 0);
+  await book(ctx, { customer: 'customer1', showId: coldplayNight1, category: 'Gold', count: 2 });
+  await book(ctx, { customer: 'dev', showId: coldplayNight1, category: 'Standard', count: 5 });
+  await book(ctx, { customer: 'meera', showId: coldplayNight1, category: 'Standard', count: 4 });
+  await book(ctx, { customer: 'vikram', showId: shows('coldplay', 1), category: 'Standard', count: 6 });
+  await book(ctx, { customer: 'ananya', showId: shows('coldplay', 1), category: 'Gold', count: 2 });
 
   /* --- Act 2: a cancellation with nobody waiting -----------------------
      The plain path, and the contrast that makes Act 4 legible: with an empty
-     queue a released seat simply returns to general sale. It also leaves a
-     cancelled row in one customer's history, a view a fresh dataset otherwise
-     never exercises. */
+     queue a released seat simply goes back on general sale. It also leaves a
+     cancelled row in customer1's history, a view a freshly built dataset
+     otherwise never exercises. */
 
   log('act 2 — a cancellation with an empty queue (seat returns to general sale)');
-  const plainCancel = await cancel(ctx, { customer: 'aarav', bookingId: toCancel.id });
+  const plainCancel = await cancel(ctx, { customer: 'customer1', bookingId: toCancel.id });
   facts.plainCancellation = {
     ref: plainCancel.booking_ref,
     released: plainCancel.seats_released,
     offered: plainCancel.seats_offered_to_waitlist,
   };
 
-  /* --- Act 3: a sold-out tier with a queue behind it -------------------
-     Golden Circle on night 1 goes to zero, then three people queue for it. Left
-     in exactly that state on purpose: it is the setup an evaluator needs in order
-     to trigger the auto-assignment themselves, by signing in as one of the
-     holders and cancelling. Nothing has been offered yet, so the FIFO order is
-     theirs to verify. */
+  /* --- Act 3: an event sold out down to the last seat -------------------
+     Arijit Singh Live has one showing in a 24-seat room, and all three
+     categories go to zero — so the *event* is sold out, not merely a tier of it.
+     Every seat travels the real hold-then-book path; nothing is asserted.
 
-  log('act 3 — Golden Circle sells out, three customers queue');
-  const gcBookings = await sellOut(ctx, {
-    showId: arijitNight1,
-    category: 'Golden Circle',
-    buyers: ['rohan', 'meera', 'dev'],
-    chunk: 4,
+     Six customers then queue across the three categories, and are left waiting.
+     That is the setup an evaluator needs in order to fire the auto-assignment
+     themselves by cancelling one of the bookings: because nothing has been
+     offered yet, the FIFO order is theirs to verify rather than take on trust. */
+
+  log('act 3 — Arijit Singh Live sells out completely, six customers queue');
+  const arijit = shows('arijit', 0);
+
+  /**
+   * Booked first, and by a documented account rather than an audience fixture.
+   *
+   * The demo asks an evaluator to cancel a booking on the sold-out event in order to
+   * watch the queue be served. That only works if they can sign in as whoever owns it,
+   * so the seats have to belong to customer1 — handing out an audience fixture's
+   * credentials for the headline demo action would be a poor trade. Standard rather than
+   * Premium because customer1 is about to join the *Premium* queue, and offering
+   * somebody the seat they just released reads like a bug even when it is not.
+   */
+  const evaluatorCancellable = await book(ctx, {
+    customer: 'customer1',
+    showId: arijit,
+    category: 'Standard',
+    count: 2,
   });
-  const queue = [];
-  for (const who of ['zoya', 'ananya', 'vikram']) {
-    const entry = await joinQueue(ctx, {
-      customer: who,
-      showId: arijitNight1,
-      category: 'Golden Circle',
+
+  for (const category of ['Premium', 'Gold', 'Standard']) {
+    await sellOut(ctx, {
+      showId: arijit,
+      category,
+      buyers: ['neha', 'arjun', 'meera', 'vikram', 'ananya', 'dev'],
+      chunk: 2,
     });
-    queue.push({ who, position: entry.position });
   }
-  facts.soldOutQueue = {
-    showId: arijitNight1,
-    category: 'Golden Circle',
+
+  const queue = [];
+  const waitlistPlan = [
+    { category: 'Premium', who: ['customer1', 'neha'] },
+    { category: 'Gold', who: ['customer2', 'arjun'] },
+    { category: 'Standard', who: ['meera', 'vikram'] },
+  ];
+  for (const { category, who } of waitlistPlan) {
+    for (const customer of who) {
+      const entry = await joinQueue(ctx, { customer, showId: arijit, category });
+      queue.push({ customer, category, position: entry.position });
+    }
+  }
+
+  const stillFree = await query(
+    `SELECT count(*)::int AS n FROM show_seats WHERE show_id = $1 AND status = 'available'`,
+    [arijit]
+  );
+  if (stillFree.rows[0].n !== 0) {
+    // The headline claim of the demo. If it is ever untrue, fail rather than ship a
+    // "sold out" event with seats quietly left in it.
+    throw new Error(`Arijit Singh Live should be sold out, but ${stillFree.rows[0].n} seat(s) are free`);
+  }
+
+  facts.soldOut = {
+    showId: arijit,
     queue,
-    cancellable: { customer: 'rohan', ref: gcBookings[0].booking_ref, seats: 4 },
+    cancellable: {
+      customer: 'customer1',
+      ref: evaluatorCancellable.booking_ref,
+      seats: 2,
+      category: 'Standard',
+    },
   };
 
   /* --- Act 4: the full waitlist loop, already played out ---------------
-     Premium at the Opera House sells out, two people queue, and one booking is
-     cancelled. The two released seats are offered to the queue in order — that is
+     Coldplay's Premium tier sells out, two customers queue, and one booking is
+     cancelled. Its two seats are offered to the queue in order — that is
      `placeSeat` doing the work, not the demo assigning anything.
 
-     The two offers are then left in different states, because they demonstrate
-     different halves of the requirement:
-       - Priya redeems hers, so there is a completed offer -> hold -> booking chain
-         visible as a 'fulfilled' queue entry with a real ticket behind it.
-       - Zoya's is left open, so a live time-limited link is clickable in the UI
-         for as long as OFFER_TTL_MINUTES allows. */
+     The two offers are then deliberately left in different states, because they
+     demonstrate different halves of the same requirement:
+       - customer2 redeems hers, leaving a completed offer -> hold -> booking
+         chain visible as a 'fulfilled' queue entry with a real ticket behind it.
+       - customer1's is left open, so a live time-limited link is clickable in the
+         UI for as long as OFFER_TTL_MINUTES allows.
 
-  log('act 4 — Opera House Premium sells out, is cancelled into, and one offer is redeemed');
-  const jazzPremium = await sellOut(ctx, {
-    showId: jazzThisWeek,
+     Note the tier stays sold out throughout: a cancelled seat becomes 'offered',
+     never 'available', so it is never briefly on general sale. */
+
+  log('act 4 — Coldplay Premium sells out, is cancelled into, and one offer is redeemed');
+  const coldplayPremium = await sellOut(ctx, {
+    showId: coldplayNight1,
     category: 'Premium',
-    buyers: ['ananya', 'vikram', 'rohan', 'dev'],
+    buyers: ['neha', 'arjun', 'meera', 'vikram', 'ananya', 'dev'],
     chunk: 2,
   });
 
-  // Priya joins first, so FIFO gives her the first released seat.
-  await joinQueue(ctx, { customer: 'priya', showId: jazzThisWeek, category: 'Premium' });
-  await joinQueue(ctx, { customer: 'zoya', showId: jazzThisWeek, category: 'Premium' });
+  // customer2 joins first, so FIFO hands her the first released seat.
+  await joinQueue(ctx, { customer: 'customer2', showId: coldplayNight1, category: 'Premium' });
+  await joinQueue(ctx, { customer: 'customer1', showId: coldplayNight1, category: 'Premium' });
 
-  const cascade = await cancel(ctx, { customer: 'ananya', bookingId: jazzPremium[0].id });
+  // Cancelled by arjun, who is not in the queue — so both released seats go to
+  // waiting customers rather than one returning to its own owner.
+  const cascade = await cancel(ctx, { customer: 'arjun', bookingId: coldplayPremium[1].id });
   if (cascade.seats_offered_to_waitlist !== 2) {
-    // Worth failing loudly. If this ever returns 0 the demo would ship a
-    // "waitlist" with no offer in it, which is the one thing it exists to show.
+    // Worth failing loudly. If this ever returns 0 the demo would ship a "waitlist"
+    // containing no offer, which is the one thing this act exists to show.
     throw new Error(
       `Expected the cancellation to produce 2 waitlist offers, got ${cascade.seats_offered_to_waitlist}`
     );
   }
 
-  const priya = ctx.user('priya');
-  const token = await offerTokenFor(jazzThisWeek, priya.id);
-  const accepted = await waitlistService.acceptOffer(token, priya.id);
+  const customer2 = ctx.user('customer2');
+  const token = await offerTokenFor(coldplayNight1, customer2.id);
+  const accepted = await waitlistService.acceptOffer(token, customer2.id);
   const redeemed = await bookingService.createBooking({
-    showId: jazzThisWeek,
+    showId: coldplayNight1,
     seatIds: accepted.seat_ids,
-    customer: { id: priya.id, name: priya.name, email: priya.email },
+    customer: { id: customer2.id, name: customer2.name, email: customer2.email },
   });
   ctx.count.bookings += 1;
 
   facts.waitlistLoop = {
-    showId: jazzThisWeek,
+    showId: coldplayNight1,
     category: 'Premium',
     cancelledRef: cascade.booking_ref,
     offersCreated: cascade.seats_offered_to_waitlist,
-    fulfilled: { customer: 'priya', ref: redeemed.booking.booking_ref },
-    openOffer: { customer: 'zoya' },
+    fulfilled: { customer: 'customer2', ref: redeemed.booking.booking_ref },
+    openOffer: { customer: 'customer1' },
   };
 
   /* --- Act 5: a live checkout hold -------------------------------------
-     Somebody mid-checkout, so the seat map shows all four seat states at once
+     Somebody mid-checkout, so a seat map shows all four seat states at once
      rather than only available and booked. Short-lived by nature: this is a real
      hold with the real TTL, so it auto-releases like any other. That it decays is
      the honest behaviour — a hold pinned open forever would misrepresent the very
@@ -296,11 +343,11 @@ async function play(ctx) {
 
   log('act 5 — a live checkout hold, with the real TTL');
   const holdShow = shows('interstellar', 2);
-  const holdSeatIds = await availableSeats(holdShow, 'Recliner', 2);
-  const held = await holdService.holdSeats(holdShow, holdSeatIds, ctx.user('priya').id);
+  const holdSeatIds = await availableSeats(holdShow, 'Premium', 2);
+  const held = await holdService.holdSeats(holdShow, holdSeatIds, ctx.user('customer2').id);
   facts.liveHold = {
     showId: holdShow,
-    customer: 'priya',
+    customer: 'customer2',
     seats: held.seats.map((s) => `${s.row_label}${s.seat_number}`).join(', '),
     ttlMinutes: held.hold_ttl_minutes,
     expiresAt: held.hold_expires_at,

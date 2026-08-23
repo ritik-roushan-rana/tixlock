@@ -84,21 +84,43 @@ const seatState = (page, seatId) =>
 console.log('=== Realtime + waitlist verification ===\n');
 
 /* --- Fresh show ---------------------------------------------------------- */
-const organiser = await login('organiser@ticketbooking.local', 'organiser123');
+const organiser = await login('organiser@tixlock.com', 'Organiser123');
 /**
- * Price whatever categories the venue actually has.
+ * Find a venue this probe can actually use, and price its real categories.
  *
- * This used to post a fixed `{ Premium, Standard }` map at `venue_id: 1`, which
- * silently coupled the probe to one seeded layout. The API requires the map to cover a
- * venue's categories exactly — it rejects both gaps and inventions — so the moment the
- * demo dataset gave venue 1 a Recliner tier, show creation 400'd and the script died a
- * few lines later on an undefined `show`. Reading the categories first makes the probe
- * work at any venue.
+ * Two separate traps, both learned the hard way:
+ *
+ *  1. The pricing map cannot be hard-coded. The API requires it to cover a venue's
+ *     categories exactly — it rejects both gaps and inventions — so a fixed
+ *     `{ Premium, Standard }` map 400s the moment a venue's layout differs.
+ *  2. "The first venue with seats" is not specific enough. The waitlist half of this
+ *     script sells out the **Premium** tier, and `verify-api-contract.mjs` leaves behind
+ *     a six-seat throwaway venue whose only category is `Probe`. Picking that one found
+ *     zero Premium seats, so nothing was booked, and the script died much later on an
+ *     undefined booking — a failure whose cause was nowhere near its symptom.
+ *
+ * So: the smallest venue that genuinely has a Premium tier. Smallest because every one
+ * of those seats has to be sold before anyone can join the queue.
  */
 const venues = await api('GET', '/venues', { token: organiser });
-const venueId = venues.body.venues.find((v) => v.seat_count > 0).id;
-const layout = await api('GET', `/venues/${venueId}`, { token: organiser });
-const pricing = Object.fromEntries(layout.body.venue.categories.map((c, i) => [c, 400 + i * 250]));
+const candidates = [...venues.body.venues]
+  .filter((v) => v.seat_count > 0)
+  .sort((a, b) => a.seat_count - b.seat_count);
+
+let venueId = null;
+let categories = null;
+for (const candidate of candidates) {
+  const detail = await api('GET', `/venues/${candidate.id}`, { token: organiser });
+  if (detail.body.venue.categories.includes('Premium')) {
+    venueId = candidate.id;
+    categories = detail.body.venue.categories;
+    break;
+  }
+}
+if (!venueId) {
+  throw new Error('No venue has a Premium tier — run `cd backend && npm run demo`');
+}
+const pricing = Object.fromEntries(categories.map((c, i) => [c, 400 + i * 250]));
 
 const created = await api('POST', '/events', {
   token: organiser,
@@ -117,7 +139,7 @@ console.log('live seat updates between two clients');
 
 const watcher = await browser.newPage();
 await watcher.setViewport({ width: 1280, height: 900 });
-await signInAs(watcher, 'customer2@ticketbooking.local');
+await signInAs(watcher, 'customer2@tixlock.com');
 await goto(watcher, `/shows/${showId}`);
 await watcher.waitForSelector('[data-seat-id]', { timeout: 12000 });
 await watcher.waitForFunction(() => document.body.innerText.includes('Live'), { timeout: 12000 }).catch(() => {});
@@ -132,7 +154,7 @@ const before = await seatState(watcher, targetSeatId);
 check('  seat starts available in watcher tab', before === 'available', String(before));
 
 // A different customer holds that seat, entirely out of band.
-const customer = await login('customer@ticketbooking.local', 'customer123');
+const customer = await login('customer1@tixlock.com', 'Customer123');
 const heldRes = await api('POST', `/shows/${showId}/hold`, {
   token: customer,
   body: { seat_ids: [Number(targetSeatId)] },
@@ -185,7 +207,7 @@ for (let i = 0; i < premium.length; i += 10) {
   await api('POST', `/shows/${showId}/hold`, { token: customer, body: { seat_ids: batch } });
   await api('POST', '/bookings', { token: customer, body: { show_id: showId, seat_ids: batch } });
 }
-const customer2 = await login('customer2@ticketbooking.local', 'customer123');
+const customer2 = await login('customer2@tixlock.com', 'Customer123');
 const joined = await api('POST', '/waitlist', {
   token: customer2,
   body: { show_id: showId, category: 'Premium' },
@@ -208,7 +230,7 @@ check('  offer token issued', Boolean(offer?.offer_token));
 // Open the emailed link in a browser, signed in as the recipient.
 const offerPage = await browser.newPage();
 await offerPage.setViewport({ width: 1280, height: 900 });
-await signInAs(offerPage, 'customer2@ticketbooking.local');
+await signInAs(offerPage, 'customer2@tixlock.com');
 await goto(offerPage, `/offer?token=${encodeURIComponent(offer.offer_token)}`);
 
 const offerRendered = await offerPage

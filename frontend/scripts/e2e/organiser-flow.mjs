@@ -100,7 +100,7 @@ async function clickText(page, text, tag = 'button') {
   return done;
 }
 
-const organiser = await login('organiser@ticketbooking.local', 'organiser123');
+const organiser = await login('organiser@tixlock.com', 'Organiser123');
 const TITLE = `Flow Test ${Date.now()}`;
 
 /* --- 1. Dashboard exposes exactly one primary creation action -------------- */

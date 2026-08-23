@@ -10,16 +10,18 @@ is emailed a QR-code ticket.
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | `admin@ticketbooking.local` | `admin12345` |
-| Organiser | `organiser@ticketbooking.local` | `organiser123` |
-| Customer | `customer@ticketbooking.local` | `customer123` |
+| Admin | `admin@tixlock.com` | `Admin123` |
+| Organiser | `organiser@tixlock.com` | `Organiser123` |
+| Customer | `customer1@tixlock.com` | `Customer123` |
+| Customer | `customer2@tixlock.com` | `Customer123` |
 
-The sign-in screen has one-click buttons for these. Created by `npm run seed`.
+The sign-in screen has one-click buttons for these. Created by `npm run demo`.
 
-**Evaluating this project? Start with [DEMO.md](DEMO.md).** `npm run demo` loads a
-complete scenario — 3 venues, 7 listings, 12 showings, 29 bookings, a sold-out tier with
-a queue behind it, a live checkout hold and an open time-limited waitlist offer — so
-every mechanism below can be seen without hand-building test data.
+**Evaluating this project? Start with [DEMO.md](DEMO.md).** `npm run demo` loads a complete
+scenario — 3 venues with Premium/Gold/Standard tiers, 3 movies and 2 concerts, 11 showings,
+36 bookings, one event sold out to the last seat with six customers queued, a live checkout
+hold and an open time-limited waitlist offer — so every mechanism below can be seen without
+hand-building test data.
 
 ---
 

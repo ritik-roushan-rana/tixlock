@@ -166,8 +166,8 @@ const config = Object.freeze({
   ).replace(/\/$/, ''),
 
   adminSeed: Object.freeze({
-    email: process.env.ADMIN_EMAIL || 'admin@ticketbooking.local',
-    password: process.env.ADMIN_PASSWORD || 'admin12345',
+    email: process.env.ADMIN_EMAIL || 'admin@tixlock.com',
+    password: process.env.ADMIN_PASSWORD || 'Admin123',
     name: process.env.ADMIN_NAME || 'Platform Admin',
   }),
 });

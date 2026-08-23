@@ -37,18 +37,27 @@ const deliversForReal = () => !config.isTest && (config.mailjet.enabled || confi
  * Domains that can never receive mail, so sending to them only burns provider quota
  * and sender reputation.
  *
- * RFC 2606 and RFC 6761 reserve these for documentation and testing; `.local` is
- * mDNS. Every fixture address in this repo lands in one of them —
- * `customer@ticketbooking.local`, `customer147@test.local`, `wlowner…@example.com`.
+ * RFC 2606 and RFC 6761 reserve most of these for documentation and testing; `.local`
+ * is mDNS. Nearly every fixture address in this repo lands in one of them —
+ * `neha@audience.tixlock.local`, `customer147@test.local`, `wlowner…@example.com`.
  *
  * This guard exists because those addresses reached the real provider: 651 sends in
  * two days produced 625 soft bounces ("Unable to find MX of domain test.local"),
  * which exhausted a free-plan send allowance and stopped genuine booking
  * confirmations from going out. A 96% bounce rate is also how a sending account gets
  * suspended outright, so this protects more than the credit balance.
+ *
+ * `tixlock.com` is the one entry here that is not reserved by an RFC, and it is listed
+ * for a concrete reason: the demo sign-in accounts are `admin@`, `organiser@`,
+ * `customer1@` and `customer2@tixlock.com`, and no mailbox exists behind any of them.
+ * This project sends *from* a Gmail address, not from tixlock.com, so nothing real is
+ * being suppressed. The demo actively invites an evaluator to cancel a booking, which
+ * fires a cancellation notice and possibly a waitlist offer, so without this line the
+ * headline demo action would generate guaranteed hard bounces every time it is
+ * performed. Delete this alternative the day real mailboxes exist at tixlock.com.
  */
 const UNROUTABLE_DOMAIN =
-  /@(?:[^@]*\.)?(?:test|example|invalid|localhost|local)$|@example\.(?:com|net|org)$/i;
+  /@(?:[^@]*\.)?(?:test|example|invalid|localhost|local)$|@example\.(?:com|net|org)$|@(?:[^@]*\.)?tixlock\.com$/i;
 
 const isUnroutable = (to) =>
   String(to ?? '')

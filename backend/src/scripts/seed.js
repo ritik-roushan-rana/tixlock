@@ -23,7 +23,7 @@
 const config = require('../config/env');
 const { query, close } = require('../config/db');
 const authService = require('../services/authService');
-const { USERS } = require('./demo/catalogue');
+const { USERS, SIGN_IN_USERS } = require('./demo/catalogue');
 
 async function upsertUser({ name, email, password, role }) {
   const existing = await query('SELECT id, role FROM users WHERE lower(email) = lower($1)', [email]);
@@ -66,9 +66,13 @@ async function main() {
   console.log('');
   console.log('[seed] done. Sign in with:');
   console.log(`  admin       ${config.adminSeed.email} / ${config.adminSeed.password}`);
-  for (const spec of USERS) {
+  // Only the sign-in accounts are listed. The audience fixtures are created too, because
+  // the demo narrative needs them to exist, but printing nine near-identical rows would
+  // bury the four credentials anyone actually types.
+  for (const spec of SIGN_IN_USERS) {
     console.log(`  ${spec.role.padEnd(10)}  ${spec.email} / ${spec.password}`);
   }
+  console.log(`  (plus ${USERS.length - SIGN_IN_USERS.length} audience fixtures, not sign-in accounts)`);
   console.log('');
   console.log('[seed] no venues or events were created. Run "npm run demo" for the full');
   console.log('       demo scenario (destructive — it wipes application data first).');

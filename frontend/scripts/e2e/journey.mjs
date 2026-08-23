@@ -218,10 +218,10 @@ const termChip = await page.evaluate(
 );
 check('  active term shown as a chip', termChip === 'interstellar', String(termChip));
 
-// Venue match. No event title contains "Opera" — only the venue name does — so
-// results here prove the search reaches past events.title.
+// Venue match. No event title contains "Opera" — only the Royal Opera House's name
+// does — so results here prove the search reaches past events.title.
 await goto('/events?q=Opera');
-check('  search matches venue names', await waitForText('Sunday Jazz'));
+check('  search matches venue names', await waitForText('Arijit Singh'));
 
 // Description match. "wristbands" appears only in one event's description.
 await goto('/events?q=wristbands');
@@ -263,7 +263,7 @@ check('  legend rendered', has(body, 'Available') && has(body, 'Booked'));
 
 /* --- Customer ------------------------------------------------------------ */
 console.log('\ncustomer');
-check('login redirects customer to /events', await signIn('customer@ticketbooking.local'), page.url());
+check('login redirects customer to /events', await signIn('customer1@tixlock.com'), page.url());
 
 await goto(`/shows/${fixture.showId}`);
 await page.waitForSelector('[data-seat-id]:not([disabled])', { timeout: 12000 });
@@ -300,7 +300,7 @@ check('  waitlist tab present', has(await bodyText(), 'Waitlist'));
 
 /* --- Organiser ----------------------------------------------------------- */
 console.log('\norganiser');
-check('login redirects organiser to /organiser', await signIn('organiser@ticketbooking.local'), page.url());
+check('login redirects organiser to /organiser', await signIn('organiser@tixlock.com'), page.url());
 check('dashboard renders stats', await waitForText('Seats sold'));
 check('  events table rendered', await waitForText('Dune: Part Three'));
 const charts = await page.evaluate(() => document.querySelectorAll('svg.recharts-surface').length);
@@ -313,7 +313,7 @@ check('  categories + attendees tabs', has(body, 'Categories') && has(body, 'Att
 
 /* --- Admin --------------------------------------------------------------- */
 console.log('\nadmin');
-check('login redirects admin to /admin', await signIn('admin@ticketbooking.local'), page.url());
+check('login redirects admin to /admin', await signIn('admin@tixlock.com'), page.url());
 check('venues page renders', await waitForText('Existing venues'));
 body = await bodyText();
 check('  layout editor rendered', has(body, 'Screen / Stage') && has(body, 'Categories'));
@@ -322,7 +322,7 @@ const editorSeats = await page.evaluate(
   () => document.querySelectorAll('button[aria-label^="Seat "]').length
 );
 check('  editor grid draws seats', editorSeats > 0, `${editorSeats} buttons`);
-check('  seeded venue listed', has(body, 'Cineplex Andheri'));
+check('  seeded venue listed', has(body, 'PVR Icon'));
 
 /* --- Role guard ---------------------------------------------------------- */
 console.log('\nrole guards');

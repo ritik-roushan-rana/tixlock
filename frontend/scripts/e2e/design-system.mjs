@@ -455,21 +455,21 @@ await audit('not found', '/nope');
 await audit('offer bare', '/offer');
 
 /* --- customer ----------------------------------------------------- */
-await signIn('customer@ticketbooking.local');
+await signIn('customer1@tixlock.com');
 await audit('bookings', '/bookings');
 await audit('bookings', '/bookings', { width: 390, height: 844 });
 await audit('seat map customer', '/shows/1');
 
 /* --- organiser ---------------------------------------------------- */
 await signOut();
-await signIn('organiser@ticketbooking.local');
+await signIn('organiser@tixlock.com');
 await audit('organiser dashboard', '/organiser');
 await audit('organiser dashboard', '/organiser', { width: 390, height: 844 });
 await audit('organiser event', '/organiser/events/1');
 
 /* --- admin -------------------------------------------------------- */
 await signOut();
-await signIn('admin@ticketbooking.local');
+await signIn('admin@tixlock.com');
 await audit('admin venues', '/admin');
 await audit('admin venues', '/admin', { width: 390, height: 844 });
 

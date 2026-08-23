@@ -21,10 +21,35 @@
  * evaluator who has booked, cancelled and generally made a mess can be handed a clean
  * demo again with one command.
  *
- * No mail leaves the process. Every account is `@ticketbooking.local`, and the mailer
- * refuses to hand reserved domains to the provider, so the ~29 bookings and 2
- * cancellations here cannot send or bounce a single message.
+ * No mail leaves this process — see the kill-switch immediately below, which runs before
+ * anything else.
  */
+
+/**
+ * Force the mailer onto its console transport for the duration of this script.
+ *
+ * Building the demo performs around forty bookings and a handful of cancellations, and
+ * every one of those dispatches a confirmation, a cancellation notice or a waitlist
+ * offer. The sign-in fixtures live at `@tixlock.com`, which is a perfectly ordinary
+ * domain as far as the mailer is concerned — unlike the reserved `.local` addresses, it
+ * is *not* covered by the unroutable-domain guard. Left alone, seeding would therefore
+ * hand forty messages to Mailjet for mailboxes that do not exist and collect forty hard
+ * bounces, which is precisely the failure documented in mailer.js: a previous run of
+ * fixture addresses produced 625 bounces, exhausted the free-plan allowance, and stopped
+ * genuine booking confirmations from going out.
+ *
+ * Deleting the credentials from this process's environment makes `getTransport()` fall
+ * through to the logging transport. It is done here, above every `require`, because
+ * `config/env.js` reads some of these eagerly at module load, and the mailer caches its
+ * transport on first use — so by the time any other module has been imported it is
+ * already too late to change the decision.
+ *
+ * This affects only this short-lived script. The running server is untouched and still
+ * emails real customers normally.
+ */
+for (const key of ['MJ_APIKEY_PUBLIC', 'MJ_APIKEY_PRIVATE', 'SMTP_HOST']) {
+  delete process.env[key];
+}
 
 const config = require('../config/env');
 const { query, close } = require('../config/db');
@@ -32,7 +57,7 @@ const authService = require('../services/authService');
 const venueService = require('../services/venueService');
 const eventService = require('../services/eventService');
 
-const { USERS, VENUES, EVENTS } = require('./demo/catalogue');
+const { USERS, SIGN_IN_USERS, AUDIENCE_USERS, VENUES, EVENTS } = require('./demo/catalogue');
 const narrative = require('./demo/narrative');
 
 const log = (msg) => console.log(`[demo] ${msg}`);
@@ -238,15 +263,15 @@ async function main() {
   `);
   const t = tally[0];
 
-  // Resolved to real addresses, not catalogue keys: "priya" signs in as
-  // customer2@ticketbooking.local, and printing the key would send an evaluator
-  // hunting for a login that does not exist.
+  // Resolved to real addresses, not catalogue keys: "customer2" signs in as
+  // customer2@tixlock.com, and printing the key would send an evaluator hunting for a
+  // login that does not exist.
   const emailOf = (key) => users.get(key).email;
 
   console.log('');
   console.log('  TixLock demo data ready');
   console.log('  ─────────────────────────────────────────────────────────────');
-  console.log(`  ${VENUES.length} venues · ${totalSeats} physical seats`);
+  console.log(`  ${VENUES.length} venues · ${totalSeats} physical seats · Premium / Gold / Standard`);
   console.log(`  ${t.events} events · ${t.shows} showings · ${t.seats} sellable seats`);
   console.log(`  ${t.confirmed} confirmed bookings · ${t.cancelled} cancelled · revenue ${t.revenue}`);
   console.log(
@@ -258,22 +283,26 @@ async function main() {
   console.log('');
   console.log('  Sign in');
   console.log(`    admin       ${config.adminSeed.email} / ${config.adminSeed.password}`);
-  for (const spec of USERS) {
+  for (const spec of SIGN_IN_USERS) {
     console.log(`    ${spec.role.padEnd(10)}  ${spec.email} / ${spec.password}`);
   }
+  console.log(
+    `    (plus ${AUDIENCE_USERS.length} audience fixtures on @audience.tixlock.local — not sign-in accounts)`
+  );
   console.log('');
   console.log('  Ready-made demo states');
   console.log(
-    `    sold out + queue     show ${facts.soldOutQueue.showId} "${facts.soldOutQueue.category}" — ` +
-      `${facts.soldOutQueue.queue.length} waiting`
+    `    sold out             show ${facts.soldOut.showId} "Arijit Singh Live" — every seat gone, ` +
+      `${facts.soldOut.queue.length} customers queued across 3 categories`
   );
   console.log(
-    `    trigger auto-assign  sign in as ${emailOf(facts.soldOutQueue.cancellable.customer)} and cancel ` +
-      `${facts.soldOutQueue.cancellable.ref} (${facts.soldOutQueue.cancellable.seats} seats)`
+    `    trigger auto-assign  cancel ${facts.soldOut.cancellable.ref} ` +
+      `(${facts.soldOut.cancellable.seats} ${facts.soldOut.cancellable.category} seats, held by ` +
+      `${emailOf(facts.soldOut.cancellable.customer)})`
   );
   console.log(
-    `    live offer           ${emailOf(facts.waitlistLoop.openOffer.customer)} holds an open, time-limited ` +
-      `offer (${config.offerTtlMinutes} min from now)`
+    `    live offer           ${emailOf(facts.waitlistLoop.openOffer.customer)} holds an open, ` +
+      `time-limited offer (${config.offerTtlMinutes} min from now)`
   );
   console.log(
     `    completed loop       ${emailOf(facts.waitlistLoop.fulfilled.customer)} redeemed an offer -> ` +

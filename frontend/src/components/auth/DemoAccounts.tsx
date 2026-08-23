@@ -1,25 +1,29 @@
+/**
+ * Demo accounts, one click to fill the form.
+ *
+ * Kept because this is an evaluation build and a reviewer needs to move between roles
+ * quickly. The hint column matters as much as the credentials: `npm run demo` puts each
+ * of these accounts into a specific state, and working out which of them is holding the
+ * sold-out seats is not a good use of a reviewer's first two minutes.
+ *
+ * Both customers are listed deliberately. The live seat map and the waitlist hand-off
+ * are only observable with two sessions open at once, so a second account is not a
+ * convenience here, it is what makes those two features demonstrable at all.
+ */
 const ACCOUNTS = [
-  { role: 'Admin', email: 'admin@ticketbooking.local', password: 'admin12345' },
-  { role: 'Organiser', email: 'organiser@ticketbooking.local', password: 'organiser123' },
-  { role: 'Customer', email: 'customer@ticketbooking.local', password: 'customer123' },
-  { role: 'Customer 2', email: 'customer2@ticketbooking.local', password: 'customer123' },
+  { role: 'Admin', email: 'admin@tixlock.com', password: 'Admin123', hint: 'Venues + seat layouts' },
+  { role: 'Organiser', email: 'organiser@tixlock.com', password: 'Organiser123', hint: 'Revenue + bookings' },
+  { role: 'Customer 1', email: 'customer1@tixlock.com', password: 'Customer123', hint: 'History, and a live seat offer' },
+  { role: 'Customer 2', email: 'customer2@tixlock.com', password: 'Customer123', hint: 'A checkout hold in progress' },
 ] as const;
 
-/**
- * Seeded demo accounts, one click to fill the form.
- *
- * Kept because this is an evaluation build and reviewers need to move between the
- * three roles quickly. Two customer accounts are listed deliberately: comparing
- * them in two windows is how the live seat map and the waitlist hand-off are
- * demonstrated.
- */
 export function DemoAccounts({ onPick }: { onPick: (email: string, password: string) => void }) {
   return (
     // A hairline and an eyebrow instead of a dashed card. This is a footnote to the
     // form, not a sibling panel, and the rule says so more quietly than a border box.
     <div className="border-t border-border pt-5">
       <p className="eyebrow mb-3 text-muted-foreground">
-        Demo accounts — created by <code className="font-mono normal-case">npm run seed</code>
+        Demo accounts — created by <code className="font-mono normal-case">npm run demo</code>
       </p>
       <div className="grid gap-px bg-border">
         {ACCOUNTS.map((account) => (
@@ -35,6 +39,11 @@ export function DemoAccounts({ onPick }: { onPick: (email: string, password: str
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground">
               {account.email}
+            </span>
+            {/* Dropped on narrow screens rather than wrapped: the email is the thing
+                being clicked, and a two-line row would cost more than the hint adds. */}
+            <span className="ml-auto hidden shrink-0 text-xs text-muted-foreground sm:block">
+              {account.hint}
             </span>
           </button>
         ))}

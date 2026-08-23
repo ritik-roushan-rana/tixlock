@@ -69,10 +69,10 @@ console.log('authApi');
 const health = await call('GET', '/health');
 check('systemApi.health  GET /health', health.status === 200 && health.body?.status === 'ok');
 
-const customer = await login('customer@ticketbooking.local', 'customer123');
-const customer2 = await login('customer2@ticketbooking.local', 'customer123');
-const organiser = await login('organiser@ticketbooking.local', 'organiser123');
-const admin = await login('admin@ticketbooking.local', 'admin12345');
+const customer = await login('customer1@tixlock.com', 'Customer123');
+const customer2 = await login('customer2@tixlock.com', 'Customer123');
+const organiser = await login('organiser@tixlock.com', 'Organiser123');
+const admin = await login('admin@tixlock.com', 'Admin123');
 
 check('authApi.login     POST /auth/login', Boolean(customer && organiser && admin));
 

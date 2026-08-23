@@ -220,7 +220,7 @@ console.log('\n=== organiser dashboard · slow 4G · dark theme ===');
   const auth = await fetch('http://localhost:3000/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'organiser@ticketbooking.local', password: 'organiser123' }),
+    body: JSON.stringify({ email: 'organiser@tixlock.com', password: 'Organiser123' }),
   }).then((r) => r.json());
   if (!auth.token) throw new Error('organiser login failed');
 
